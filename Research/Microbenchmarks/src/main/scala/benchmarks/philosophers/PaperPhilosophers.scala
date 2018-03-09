@@ -2,7 +2,7 @@ package benchmarks.philosophers
 
 import java.util.concurrent.{Executors, ThreadLocalRandom}
 
-import rescala.core.{Scheduler, Pulse, REName, Struct}
+import rescala.core.{Scheduler, REName, Struct}
 import rescala.fullmv.FullMVStruct
 import rescala.parrp.Backoff
 
@@ -224,7 +224,6 @@ object PaperPhilosophers {
     }
     if(scores.exists(_.isFailure)) {
       println("There were failures -> not accessing total score")
-      println("Thread pool state: "+engine.threadPool)
     } else {
       val individualsSum = scores.map(_.get).sum
       if(table.total == individualsSum){
@@ -233,7 +232,5 @@ object PaperPhilosophers {
         println("Total score: " + table.total + " (differs from individual scores' sum of " + individualsSum + ")")
       }
     }
-    println(engine.instances.size() + " turn instances remain.")
-    println(engine.lockHost.instances.size() + " lock instances remain.")
   }
 }
