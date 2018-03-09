@@ -1,6 +1,6 @@
 package rescala.fullmv
 
-import java.util.concurrent.locks.{Lock, ReentrantLock}
+import java.util.concurrent.locks.Lock
 
 sealed trait SCCState {
   def unlockedIfLocked(): SCCConnectivity
@@ -26,17 +26,16 @@ case class LockedSameSCC(lock: Lock) extends SCCState {
 }
 
 object SerializationGraphTracking /*extends LockContentionTimer*/ {
-  val lock: ReentrantLock = new ReentrantLock()
-
   def tryLock(defender: FullMVTurn, contender: FullMVTurn, sccState: SCCState): SCCState = {
+    assert(defender.engine == contender.engine, s"locking two turns from different engines")
     sccState match {
       case x@LockedSameSCC(_) =>
 //        entered()
         x
       case somethingUnlocked =>
-        if(lock.tryLock()) {
+        if(contender.engine.lock.tryLock()) {
 //          entered()
-          LockedSameSCC(lock)
+          LockedSameSCC(contender.engine.lock)
         } else {
           Thread.`yield`()
           somethingUnlocked

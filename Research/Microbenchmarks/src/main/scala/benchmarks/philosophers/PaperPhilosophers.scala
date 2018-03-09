@@ -172,7 +172,7 @@ object PaperPhilosophers {
     val threadCount = if(args.length >= 2) Integer.parseInt(args(1)) else tableSize
     val duration = if(args.length >= 3) Integer.parseInt(args(2)) else 0
 
-    implicit val engine = new rescala.fullmv.FullMVEngine(Duration.Zero, s"PaperPhilosophers($tableSize,$threadCount)")
+    implicit val engine = new rescala.fullmv.FullMVEngine(s"PaperPhilosophers($tableSize,$threadCount)")
     val table = new PaperPhilosophers(tableSize, engine, dynamicEdgeChanges = true) with TransposeTopper[FullMVStruct]
 
 //    println("====================================================================================================")

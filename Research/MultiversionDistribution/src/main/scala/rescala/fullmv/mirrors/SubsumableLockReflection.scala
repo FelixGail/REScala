@@ -1,8 +1,6 @@
 package rescala.fullmv.mirrors
 
 import rescala.fullmv.FullMVEngine
-import rescala.fullmv.sgt.synchronization.SubsumableLock.DEBUG
-import rescala.fullmv.sgt.synchronization._
 
 import scala.concurrent.Future
 

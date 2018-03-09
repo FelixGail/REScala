@@ -6,11 +6,9 @@ import rescala.fullmv.FramingBranchResult.{Deframe, Frame, FramingBranchEnd}
 import rescala.fullmv.NotificationResultAction.NotificationOutAndSuccessorOperation.FollowFraming
 import rescala.fullmv._
 
-import scala.concurrent.duration.Duration
-
 class NodeVersionHistoryTest extends FunSuite {
   test("SupersedeFraming into double marker trailer") {
-    val engine = new FullMVEngine(Duration.Zero, "asd")
+    val engine = new FullMVEngine("asd")
 
     val createN = engine.newTurn()
     createN.beginExecuting()
@@ -26,9 +24,12 @@ class NodeVersionHistoryTest extends FunSuite {
     framing1.beginFraming()
     val framing2 = engine.newTurn()
     framing2.beginFraming()
-    val lock = SerializationGraphTracking.acquireLock(framing1, framing2, UnlockedUnknown)
-    framing2.addPredecessor(framing1.selfNode)
-    lock.unlock()
+    val lock = SerializationGraphTracking.tryLock(framing1, framing2, UnlockedUnknown).asInstanceOf[LockedSameSCC].lock
+    try {
+      framing2.addPredecessor(framing1.selfNode)
+    } finally {
+      lock.unlock()
+    }
 
     assert(n.incrementFrame(framing2) === FramingBranchEnd) // End because earlier frame by reevaluate turn exists
 

@@ -21,9 +21,7 @@ trait RegularReevaluationHandling extends ReevaluationHandling[Reactive[FullMVSt
       override protected def dynamicAccess(reactive: ReSource[FullMVStruct]): reactive.Value = turn.dynamicAfter(reactive)
     }
     val res: Result[node.Value, FullMVStruct] = try {
-      turn.host.withTurn(turn) {
-        node.reevaluate(ticket)
-      }
+      node.reevaluate(ticket)
     } catch {
       case exception: Throwable =>
         System.err.println(s"[FullMV Error] Reevaluation of $node failed with ${exception.getClass.getName}: ${exception.getMessage}; Completing reevaluation as NoChange.")
@@ -56,7 +54,7 @@ trait SourceReevaluationHandling extends ReevaluationHandling[ReSource[FullMVStr
   def doReevaluation(): Unit = {
 //    assert(Thread.currentThread() == turn.userlandThread, s"$this on different thread ${Thread.currentThread().getName}")
     assert(turn.phase == TurnPhase.Executing, s"$turn cannot source-reevaluate (requires executing phase")
-    val ic = turn.asInstanceOf[FullMVTurnImpl].initialChanges(node)
+    val ic = turn.asInstanceOf[FullMVTurn].initialChanges(node)
     assert(ic.source eq node, s"$turn initial change map broken?")
     if(!ic.writeValue(ic.source.state.latestValue, x => processReevaluationResult(Some(x.asInstanceOf[node.Value])))) {
       processReevaluationResult(None)
@@ -81,7 +79,6 @@ trait ReevaluationHandling[N <: ReSource[FullMVStruct]] extends FullMVAction {
     outAndSucc match {
       case Glitched =>
         // do nothing, reevaluation will be repeated at a later point
-        turn.activeBranchDifferential(TurnPhase.Executing, -1)
       case NoSuccessor(out) =>
         for(dep <- out) turn.pushLocalTask(Notification(turn, dep, changed))
       case FollowFraming(out, succTxn) =>

@@ -1,21 +1,23 @@
 package rescala.fullmv
 
+import java.util.concurrent.locks.ReentrantLock
+
 import rescala.core.SchedulerImpl
 import rescala.fullmv.tasks.{Framing, SourceNotification}
 
-import scala.concurrent.{Await, ExecutionContext, Future}
-import scala.concurrent.duration._
 import scala.util.Try
 
-class FullMVEngine(val timeout: Duration, val name: String) extends SchedulerImpl[FullMVStruct, FullMVTurn] {
-  override val dummy: FullMVTurnImpl = {
-    val dummy = new FullMVTurnImpl(this, Host.dummyGuid, null, lockHost.newLock())
+class FullMVEngine(val name: String) extends SchedulerImpl[FullMVStruct, FullMVTurn] {
+  val lock: ReentrantLock = new ReentrantLock()
+
+  val dummy: FullMVTurn = {
+    val dummy = new FullMVTurn(this, null)
     dummy.beginExecuting()
     dummy.completeExecuting()
-    if(Host.DEBUG || SubsumableLock.DEBUG || FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] $this SETUP COMPLETE")
+    if(FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] $this SETUP COMPLETE")
     dummy
   }
-  def newTurn(): FullMVTurnImpl = createLocal(new FullMVTurnImpl(this, _, Thread.currentThread(), lockHost.newLock()))
+  def newTurn(): FullMVTurn = new FullMVTurn(this, Thread.currentThread())
 
   override private[rescala] def singleReadValueOnce[A](reactive: Signal[A]) = reactive.state.latestValue.get
 
@@ -41,30 +43,29 @@ class FullMVEngine(val timeout: Duration, val name: String) extends SchedulerImp
         case scala.util.Failure(e) => e.printStackTrace()
         case _ =>
       }
-      assert(turn.activeBranches.get == 0, s"Admission phase left ${turn.activeBranches.get()} tasks undone.")
 
       // propagation phase
       if (setWrites.nonEmpty) {
         turn.initialChanges = admissionTicket.initialChanges.map(ic => ic.source -> ic).toMap
-        turn.activeBranchDifferential(TurnPhase.Executing, setWrites.size)
-        for(write <- setWrites) threadPool.submit(SourceNotification(turn, write, admissionResult.isSuccess && turn.initialChanges.contains(write)))
+        for(write <- setWrites) turn.pushLocalTask(SourceNotification(turn, write, admissionResult.isSuccess && turn.initialChanges.contains(write)))
       }
 
-      // wrap-up "phase" (executes in parallel with propagation)
+      // turn completion
+      turn.completeExecuting()
+
+      // wrap-up "phase"
       val transactionResult = if(admissionTicket.wrapUp == null){
         admissionResult
       } else {
         val wrapUpTicket = new WrapUpTicket(){
           override def access(reactive: ReSource): reactive.Value = turn.dynamicAfter(reactive)
-        admissionResult.map{ i =>
+        }
+        admissionResult.map { i =>
           // executed in map call so that exceptions in wrapUp make the transaction result a Failure
           admissionTicket.wrapUp(wrapUpTicket)
           i
         }
       }
-
-      // turn completion
-      turn.completeExecuting()
 
       // result
       transactionResult.get
@@ -72,11 +73,10 @@ class FullMVEngine(val timeout: Duration, val name: String) extends SchedulerImp
   }
 
   override def toString: String = "Turns " + name
-  def cacheStatus: String = s"${instances.size()} turn instances and ${lockHost.instances.size()} lock instances"
 }
 
 object FullMVEngine {
   val DEBUG = false
 
-  val default = new FullMVEngine(10.seconds, "default")
+  val default = new FullMVEngine("default")
 }

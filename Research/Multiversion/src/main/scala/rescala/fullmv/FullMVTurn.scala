@@ -47,11 +47,11 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
   override def hashCode(): Int = hc
 
   val phaseLock = new ReentrantReadWriteLock()
-  @volatile var phase: TurnPhase.Type = TurnPhase.Initialized
+  @volatile var phase: TurnPhase.Type = TurnPhase.Uninitialized
 
   val successorsIncludingSelf: ArrayBuffer[FullMVTurn] = ArrayBuffer(this) // this is implicitly a set
-  @volatile var selfNode = new MutableTransactionSpanningTreeRoot[FullMVTurn](this) // this is also implicitly a set
-  @volatile var predecessorSpanningTreeNodes: Map[FullMVTurn, TransactionSpanningTreeNode[FullMVTurn]] = Map(this -> selfNode)
+  @volatile var selfNode = new MutableTransactionSpanningTreeNode[FullMVTurn](this) // this is also implicitly a set
+  @volatile var predecessorSpanningTreeNodes: Map[FullMVTurn, MutableTransactionSpanningTreeNode[FullMVTurn]] = Map(this -> selfNode)
 
   //========================================================Local State Control============================================================
 
@@ -143,7 +143,7 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
   }
 
   private def beginPhase(phase: TurnPhase.Type): Unit = {
-    assert(this.phase == TurnPhase.Initialized, s"$this already begun")
+    assert(this.phase == TurnPhase.Uninitialized, s"$this already begun")
     assert(localTaskQueue.isEmpty, s"$this cannot begin $phase: queue non empty!")
     assert(externallyPushedTasks.get == Nil, s"$this cannot begin $phase: external queue non empty!")
     assert(selfNode.size == 0, s"$this cannot begin $phase: already has predecessors!")
@@ -229,7 +229,7 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
   }
 
   def addPredecessor(predecessorSpanningTree: TransactionSpanningTreeNode[FullMVTurn]): Unit = {
-    assert(SerializationGraphTracking.lock.isHeldByCurrentThread, s"addPredecessor by thread that doesn't hold the SGT lock")
+    assert(engine.lock.isHeldByCurrentThread, s"addPredecessor by thread that doesn't hold the SGT lock")
     assert(!isTransitivePredecessor(predecessorSpanningTree.txn), s"attempted to establish already existing predecessor relation ${predecessorSpanningTree.txn} -> $this")
     if(FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] $this new predecessor ${predecessorSpanningTree.txn}.")
     for(succ <- successorsIncludingSelf) succ.maybeNewReachableSubtree(this, predecessorSpanningTree)
@@ -302,7 +302,6 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
       // ignore
       case GlitchFreeReady =>
         if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] $this ignite $reactive spawned reevaluation.")
-        activeBranchDifferential(TurnPhase.Executing, 1)
         Reevaluation(this, reactive).compute()
       case NextReevaluation(out, succTxn) if out.isEmpty =>
         if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] $this ignite $reactive spawned reevaluation for successor $succTxn.")

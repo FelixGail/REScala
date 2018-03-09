@@ -1,12 +1,8 @@
 package rescala.fullmv
 
-//import java.util.concurrent.ForkJoinPool.ManagedBlocker
 import java.util.concurrent.locks.LockSupport
 
 import rescala.core.Initializer.InitValues
-
-import scala.concurrent.Await
-//import java.util.concurrent.locks.LockSupport
 
 import rescala.core.Pulse.Exceptional
 import rescala.fullmv.NodeVersionHistory._
@@ -96,7 +92,6 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
         while (!isStable) {
           if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] parking for stable ${Version.this}")
           LockSupport.park(NodeVersionHistory.this)
-          NodeVersionHistory.this.wait()
           if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] unparked on ${Version.this}")
         }
         stableWaiters -= 1
@@ -165,7 +160,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     }
   }
 
-  override def toString: String = super.toString + s" -> size $size, latestReevOut $latestReevOut, ${if(firstFrame > size) "no frames" else "firstFrame "+firstFrame}, latestGChint $latestGChint): \n  " + _versions.zipWithIndex.map{case (version, index) => s"$index: $version"}.mkString("\n  ")
+  override def toString: String = super.toString + s" -> size $size, latestReevOut $latestReevOut, ${if(firstFrame == size) "no frames" else "firstFrame "+firstFrame}, latestGChint $latestGChint): \n  " + _versions.zipWithIndex.map{case (version, index) => s"$index: $version"}.mkString("\n  ")
 
   // =================== STORAGE ====================
 
@@ -832,16 +827,6 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
       if(stabilized.stableWaiters > 0) {
         if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] unparking ${stabilized.txn.userlandThread.getName} after stabilized $stabilized.")
         LockSupport.unpark(stabilized.txn.userlandThread)
-      NodeVersionHistory.this.notifyAll()
-    }
-    firstFrame += 1
-    if (firstFrame < size) {
-      val stabilized = _versions(firstFrame)
-      assert(!stabilized.isStable, s"cannot stabilize $firstFrame: $stabilized")
-      stabilized.lastWrittenPredecessorIfStable = stabilizeTo
-      if(stabilized.stableWaiters > 0) {
-        if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] unparking ${stabilized.txn.userlandThread.getName} after stabilized $stabilized.")
-        LockSupport.unpark(stabilized.txn.userlandThread)
       }
       if (!stabilized.isFrame) stabilizeForwardsUntilFrame(stabilizeTo)
     }
@@ -1017,7 +1002,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     *         own writes.
     */
   override def dynamicBefore(txn: T): V = {
-    assert(!valuePersistency.isTransient, s"$txn invoked dynamicBefore on transient node")
+//    assert(!valuePersistency.isTransient, s"$txn invoked dynamicBefore on transient node")
     val version = synchronized {
       val pos = ensureReadVersion(txn)
       // DO NOT INLINE THIS! it breaks the code! see https://scastie.scala-lang.org/briJDRO3RCmIMEd1zApmBQ
@@ -1028,7 +1013,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
   }
 
   override def staticBefore(txn: T): V = {
-    assert(!valuePersistency.isTransient, s"$txn invoked staticBefore on transient struct")
+//    assert(!valuePersistency.isTransient, s"$txn invoked staticBefore on transient struct")
     val version = synchronized {
       val pos = findFinalPosition(txn)
       _versions(if (pos < 0) -pos - 1 else pos)

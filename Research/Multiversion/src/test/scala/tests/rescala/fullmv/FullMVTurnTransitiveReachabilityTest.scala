@@ -1,17 +1,16 @@
 package tests.rescala.fullmv
 
 import org.scalatest.FunSuite
-import rescala.fullmv.FullMVTurnImpl
-
-import rescala.fullmv.FullMVEngine.default._
-import rescala.fullmv.sgt.synchronization.{Locked, Successful}
+import rescala.fullmv.{FullMVEngine, FullMVTurn}
 
 import scala.util.Random
 
 class FullMVTurnTransitiveReachabilityTest extends FunSuite {
+  val engine = new FullMVEngine("reachability test")
+
   case class Disagreement[T](from: T, to: T, closure: Boolean, addEdgeSearchPath: Boolean)
 
-  private def findDisagreements[T](nodes: Set[T], trees: Map[T, FullMVTurnImpl], transitiveClosure: Map[T, Set[T]]) = {
+  private def findDisagreements[T](nodes: Set[T], trees: Map[T, FullMVTurn], transitiveClosure: Map[T, Set[T]]) = {
     for (from <- nodes; to <- nodes if transitiveClosure(from)(to) != trees(from).isTransitivePredecessor(trees(to)))
       yield Disagreement(from, to, transitiveClosure(from)(to), trees(from).isTransitivePredecessor(trees(to)))
   }
@@ -28,10 +27,12 @@ class FullMVTurnTransitiveReachabilityTest extends FunSuite {
   }
 
   private def makeTreesUnderSingleLockedLock(nodes: Set[Int]) = {
-    val trees: Map[Int, FullMVTurnImpl] = nodes.map(e => (e, newTurn())).toMap
+    val trees: Map[Int, FullMVTurn] = nodes.map(e => (e, engine.newTurn())).toMap
     // put all transactions under a common locked lock, so that all locking assertions hold
     trees.values.foreach(_.beginExecuting())
-    trees
+    val lock = engine.lock
+    lock.lock()
+    (trees, lock)
   }
 
   test("Digraph Reachability is correct for paper graph") {
@@ -53,18 +54,22 @@ class FullMVTurnTransitiveReachabilityTest extends FunSuite {
 
     val nodes = edges.keySet
 
-    val trees = makeTreesUnderSingleLockedLock(nodes)
-    var addedEdges = Map[Int, Set[Int]]().withDefaultValue(Set())
-    for ((from, tos) <- edges; to <- tos) {
-      addedEdges = addEdgeIfPossibleAndVerify(nodes, trees, addedEdges, from, to)
+    val (trees, locked) = makeTreesUnderSingleLockedLock(nodes)
+    try {
+      var addedEdges = Map[Int, Set[Int]]().withDefaultValue(Set())
+      for ((from, tos) <- edges; to <- tos) {
+        addedEdges = addEdgeIfPossibleAndVerify(nodes, trees, addedEdges, from, to)
+      }
+    } finally {
+      locked.unlock()
     }
   }
 
-  private def addEdgeIfPossibleAndVerify(nodes: Set[Int], trees: Map[Int, FullMVTurnImpl], addedEdges: Map[Int, Set[Int]], from: Int, to: Int): Map[Int, Set[Int]] = {
+  private def addEdgeIfPossibleAndVerify(nodes: Set[Int], trees: Map[Int, FullMVTurn], addedEdges: Map[Int, Set[Int]], from: Int, to: Int): Map[Int, Set[Int]] = {
     val fromTree = trees(from)
     val toTree = trees(to)
     val res = if (!fromTree.isTransitivePredecessor(toTree)) {
-      Await.result(fromTree.addPredecessor(toTree.selfNode), Duration.Zero)
+      fromTree.addPredecessor(toTree.selfNode)
       addedEdges + (from -> (addedEdges(from) + to))
     } else addedEdges
 
@@ -78,11 +83,15 @@ class FullMVTurnTransitiveReachabilityTest extends FunSuite {
     val SIZE = 31
     val random = new Random()
     val nodes = (0 until SIZE).toSet
-    val trees = makeTreesUnderSingleLockedLock(nodes)
-    var addedEdges = Map[Int, Set[Int]]().withDefaultValue(Set())
-    for(_ <- 0 until SIZE*SIZE) {
-      val from, to = random.nextInt(SIZE)
-      addedEdges = addEdgeIfPossibleAndVerify(nodes, trees, addedEdges, from, to)
+    val (trees, lock) = makeTreesUnderSingleLockedLock(nodes)
+    try {
+      var addedEdges = Map[Int, Set[Int]]().withDefaultValue(Set())
+      for (_ <- 0 until SIZE * SIZE) {
+        val from, to = random.nextInt(SIZE)
+        addedEdges = addEdgeIfPossibleAndVerify(nodes, trees, addedEdges, from, to)
+      }
+    } finally {
+      lock.unlock()
     }
   }
 }
