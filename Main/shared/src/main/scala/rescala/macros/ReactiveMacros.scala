@@ -5,29 +5,40 @@ import retypecheck._
 
 import scala.reflect.macros.blackbox
 
+object MacroTags {
+  type Staticism
+  type Static <: Staticism
+  type Dynamic <: Staticism
+}
+
 class ReactiveMacros(val c: blackbox.Context) {
 
   import c.universe._
 
-  def SignalMacro[A: c.WeakTypeTag, S <: Struct : c.WeakTypeTag]
-  (expression: c.Expr[A])(ticket: c.Tree): c.Tree = ReactiveExpression(TermName("Signals"), expression, ticket)
-
-  def EventMacro[A: c.WeakTypeTag, S <: Struct : c.WeakTypeTag]
-  (expression: c.Expr[A])(ticket: c.Tree): c.Tree = ReactiveExpression(TermName("Events"), expression, ticket)
-
-  def ReactiveExpression[A: c.WeakTypeTag, S <: Struct : c.WeakTypeTag]
-  (signalsOrEvents: TermName, expression: c.Expr[A], ticket: c.Tree): c.Tree = {
+  def ReactiveExpression[A: c.WeakTypeTag, S <: Struct : c.WeakTypeTag, IsStatic <: MacroTags.Staticism : c.WeakTypeTag, ReactiveType : c.WeakTypeTag]
+  (expression: c.Expr[A])(ticket: c.Tree): c.Tree = {
 
     if (c.hasErrors)
       return q"""throw new ${termNames.ROOTPKG}.scala.NotImplementedError("macro not expanded because of other compilation errors")"""
 
-    val mp = ReactiveMacro(expression)
-    val creationMethod = TermName(if (mp.hasOnlyStaticAccess()) "static" else "dynamic")
-    val body =
-      q"""${termNames.ROOTPKG}.rescala.reactives.$signalsOrEvents.$creationMethod[${weakTypeOf[A]}, ${weakTypeOf[S]}](
-         ..${mp.detectedStaticReactives ::: mp.cutOutReactiveTerms}
-         ){${mp.userComputation}}($ticket)"""
-    mp.makeBlock(body)
+    val ticketTermName: TermName = TermName(c.freshName("ticket$"))
+    val ticketIdent: Ident = Ident(ticketTermName)
+
+    val forceStatic = !(weakTypeOf[IsStatic] <:< weakTypeOf[MacroTags.Dynamic])
+    val weAnalysis = new WholeExpressionAnalysis(expression.tree)
+    val cutOut = new CutOutTransformer(weAnalysis)
+    val cutOutTree = cutOut.transform(expression.tree)
+    val detections = new RewriteTransformer(weAnalysis, ticketIdent, forceStatic)
+    val rewrittenTree = detections transform cutOutTree
+
+    makeExpression[S, A](
+      weakTypeOf[ReactiveType].typeSymbol.asClass.module,
+      ticket,
+      detections.detectedStaticReactives,
+      detections.detectedDynamicReactives.isEmpty,
+      ticketTermName,
+      rewrittenTree,
+      cutOut.cutOutReactivesVals.reverse)
   }
 
 
@@ -36,147 +47,185 @@ class ReactiveMacros(val c: blackbox.Context) {
     if (c.hasErrors)
       return q"""throw new ${termNames.ROOTPKG}.scala.NotImplementedError("macro not expanded because of other compilation errors")"""
 
-    val mp = ReactiveMacro(expression)
+    val ticketTermName: TermName = TermName(c.freshName("ticket$"))
+    val ticketIdent: Ident = Ident(ticketTermName)
 
-    val body = if (mp.detectedReactives.isEmpty) {
-      q"""${c.prefix}.staticMap($expression)($ticket)"""
-    }
-    else {
-
-      val mapFunctionArgumentTermName = TermName(c.freshName("eventValue$"))
-      val mapFunctionArgumentIdent = Ident(mapFunctionArgumentTermName)
-      //internal setType(mapFunctionArgumentIdent, weakTypeOf[Event[T, S]])
-
-      val extendedDetections = mapFunctionArgumentIdent :: mp.detectedStaticReactives ::: mp.cutOutReactiveTerms
-
-      val valueAccessMethod = TermName(if (mp.hasOnlyStaticAccess()) "staticDepend" else "depend")
-      val mp2 = mp.copy(innerTree = q"""${mp.ticketTermName}.$valueAccessMethod($mapFunctionArgumentIdent).map(${mp.innerTree})""")
+    val weAnalysis = new WholeExpressionAnalysis(expression.tree)
+    val cutOut = new CutOutTransformer(weAnalysis)
+    val cutOutTree = cutOut.transform(expression.tree)
+    val detections = new RewriteTransformer[S](weAnalysis, ticketIdent, requireStatic = true)
+    val rewrittenTree = detections transform cutOutTree
 
 
-      val creationMethod = TermName(if (mp.hasOnlyStaticAccess()) "static" else "dynamic")
-      q"""{
-        val $mapFunctionArgumentTermName = ${c.prefix}
-        ${termNames.ROOTPKG}.rescala.reactives.Events.$creationMethod[${weakTypeOf[A]}, ${weakTypeOf[S]}](..$extendedDetections){${mp2.userComputation}}($ticket)
-      }"""
-    }
+    val mapFunctionArgumentTermName = TermName(c.freshName("eventValue$"))
+    val mapFunctionArgumentIdent = Ident(mapFunctionArgumentTermName)
 
-    mp.makeBlock(body)
+    val extendedDetections = mapFunctionArgumentIdent :: detections.detectedStaticReactives ::: cutOut.cutOutReactiveIdentifiers
+
+    val valueAccessMethod = TermName(if (detections.detectedDynamicReactives.isEmpty) "dependStatic" else "depend")
+
+    val mapTree = q"""$ticketTermName.$valueAccessMethod($mapFunctionArgumentIdent).map($rewrittenTree)"""
+
+    makeExpression[S, A](
+      weakTypeOf[rescala.reactives.Events.type].termSymbol,
+      ticket,
+      extendedDetections,
+      detections.detectedDynamicReactives.isEmpty,
+      ticketTermName,
+      mapTree,
+      (q"val $mapFunctionArgumentTermName = ${c.prefix}" : ValDef) :: cutOut.cutOutReactivesVals.reverse
+    )
+
   }
 
+  def EventFoldMacro[T: c.WeakTypeTag, A: c.WeakTypeTag, S <: Struct : c.WeakTypeTag]
+  (init: c.Expr[A])(op: c.Expr[(A, T) => A])(ticket: c.Expr[rescala.core.CreationTicket[S]], serializable: c.Expr[rescala.core.ReSerializable[A]]): c.Tree = {
+    if (c.hasErrors)
+      return q"""throw new ${termNames.ROOTPKG}.scala.NotImplementedError("macro not expanded because of other compilation errors")"""
+
+    val innerTicketTermName: TermName = TermName(c.freshName("ticket$"))
+    val innerTicketIdent: Ident = Ident(innerTicketTermName)
+
+    val weAnalysis = new WholeExpressionAnalysis(op.tree)
+    val cutOut = new CutOutTransformer(weAnalysis)
+    val cutOutTree = cutOut.transform(op.tree)
+    val detections = new RewriteTransformer[S](weAnalysis, innerTicketIdent, requireStatic = true)
+    val rewrittenTree = detections transform cutOutTree
 
 
-  case class MacroPieces(
+    val mapFunctionArgumentTermName = TermName(c.freshName("eventValue$"))
+    val mapFunctionArgumentIdent = Ident(mapFunctionArgumentTermName)
+
+    val extendedDetections = mapFunctionArgumentIdent :: detections.detectedStaticReactives ::: cutOut.cutOutReactiveIdentifiers
+
+    val eventsSymbol = weakTypeOf[rescala.reactives.Events.type].termSymbol
+
+
+    // def fold[T: ReSerializable, S <: Struct](dependencies: Set[ReSource[S]], init: T)(expr: (StaticTicket[S], () => T) => T)(implicit ticket: CreationTicket[S]): Signal[T, S] = {
+    val valDefs = (q"val $mapFunctionArgumentTermName = ${c.prefix}": ValDef) :: cutOut.cutOutReactivesVals.reverse
+    val accumulatorIdent: Ident = Ident( TermName(c.freshName("accumulator$")))
+    val pulseIdent: Ident = Ident( TermName(c.freshName("pulse")))
+    val ticketType = weakTypeOf[StaticTicket[S]]
+    val body =
+      q"""$eventsSymbol.fold[${weakTypeOf[A]}, ${weakTypeOf[S]}](Set(..$extendedDetections), $init)(
+          ($innerTicketIdent: $ticketType, $accumulatorIdent: ${weakTypeOf[T]}) => {
+            val $pulseIdent = $innerTicketIdent.dependStatic($mapFunctionArgumentIdent).get
+            $rewrittenTree($accumulatorIdent(), $pulseIdent)
+          })($serializable, $ticket)"""
+    val block: c.universe.Tree = Block(valDefs, body)
+    ReTyper(c).untypecheck(block)
+
+  }
+
+  private def makeExpression[S <: Struct : c.WeakTypeTag, A: c.WeakTypeTag](
+    signalsOrEvents: c.universe.Symbol,
+    outerTicket: c.Tree,
+    dependencies: Seq[Tree],
+    isStatic: Boolean,
+    innerTicket: TermName,
     innerTree: Tree,
-    ticketTermName : TermName,
-    cutOutReactiveVals : List[ValDef],
-    cutOutReactiveTerms : List[Tree],
-    detectedStaticReactives: List[Tree],
-    detectedReactives : List[Tree] ) {
-    def userComputation[S <: Struct : c.WeakTypeTag]: Tree = {
-      val ticketType = if (hasOnlyStaticAccess()) weakTypeOf[StaticTicket[S]] else weakTypeOf[DynamicTicket[S]]
-      q"{$ticketTermName: $ticketType => $innerTree }"
-    }
-
-    def makeBlock[S <: Struct : c.WeakTypeTag, A: c.WeakTypeTag](body: c.universe.Tree): c.Tree = {
-      val block: c.universe.Tree = Block(cutOutReactiveVals.reverse, body)
-      ReTyper(c).untypecheck(block)
-    }
-
-    def hasOnlyStaticAccess(): Boolean = detectedStaticReactives.size == detectedReactives.size
-
+    valDefs: List[ValDef],
+  ): Tree = {
+    val creationMethod = TermName(if (isStatic) "static" else "dynamic")
+    val ticketType = if (isStatic) weakTypeOf[StaticTicket[S]] else weakTypeOf[DynamicTicket[S]]
+    val computation = q"{$innerTicket: $ticketType => $innerTree }"
+    val body = q"""$signalsOrEvents.$creationMethod[${weakTypeOf[A]}, ${weakTypeOf[S]}](
+         ..$dependencies
+         ){$computation}($outerTicket)"""
+    val block: c.universe.Tree = Block(valDefs, body)
+    ReTyper(c).untypecheck(block)
   }
 
   object IsCutOut
 
-  def ReactiveMacro[A: c.WeakTypeTag, S <: Struct : c.WeakTypeTag](expression: c.Expr[A]): MacroPieces = {
-    val weAnalysis = new WholeExpressionAnalysis(expression.tree)
-    // the name of the generated turn argument passed to the signal closure
-    // every Signal { ... } macro instance gets expanded into a dynamic signal
-    val ticketTermName: TermName = TermName(c.freshName("ticket$"))
-    val ticketIdent: Ident = Ident(ticketTermName)
-    //internal setType(ticketIdent, weakTypeOf[DynamicTicket[S]])
+  class RewriteTransformer[S <: Struct : WeakTypeTag](weAnalysis: WholeExpressionAnalysis, ticketIdent: Ident, requireStatic: Boolean) extends Transformer {
+
+    // list of detected inner signals
+    var detectedDynamicReactives = List[Tree]()
+    var detectedStaticReactives = List[Tree]()
+
+    override def transform(tree: Tree): Tree =
+      tree match {
+        // replace any used CreationTicket in a Signal expression with the correct turn source for the current turn
+        //q"$_.fromEngineImplicit[..$_](...$_)"
+        case turnSource@Apply(TypeApply(Select(_, TermName("fromEngineImplicit")), _), _)
+          if turnSource.tpe =:= weakTypeOf[CreationTicket[S]] && turnSource.symbol.owner == symbolOf[LowPriorityCreationImplicits] =>
+          q"""${termNames.ROOTPKG}.rescala.core.CreationTicket(
+                  ${termNames.ROOTPKG}.scala.Left($ticketIdent.creation))(
+                  ${termNames.ROOTPKG}.rescala.core.REName.create)"""
+
+        case tree@Select(reactive, TermName("now")) =>
+          c.warning(tree.pos, "Using `now` inside a reactive expression does not create a dependency, " +
+            "and can result in glitches. Use `apply` instead.")
+          super.transform(tree)
+        // Access every reactive through the ticket argument
+        // to obtain dynamic dependencies
+        //
+        // for example, this step transforms
+        //   Signal { reactive_1() + reactive_2() }
+        // to
+        //   Signals.dynamic { s => s.depend(reactive_1) + s.depend(reactive_2) }
+        case tree@REApply(untransformedReactive) =>
+          val reactive = transform(untransformedReactive)
+          val reactiveApply =
+            if (weAnalysis.isStaticDependency(reactive)) {
+              detectedStaticReactives ::= reactive
+              q"$ticketIdent.dependStatic"
+            }
+            else {
+              detectedDynamicReactives ::= reactive
+              if (requireStatic) c.error(tree.pos, "access to reactive may be dynamic")
+              q"$ticketIdent.depend"
+            }
+          internal.setType(reactiveApply, tree.tpe)
+          q"$reactiveApply($reactive)"
+        case _ =>
+          super.transform(tree)
+      }
+  }
+
+  class CutOutTransformer(weAnalysis: WholeExpressionAnalysis) extends Transformer {
 
     // the signal values that will be cut out of the Signal expression
     var cutOutReactivesVals = List[ValDef]()
-    var cutOutReactiveTerms = List[Tree]()
-    // list of detected inner signals
-    var detectedReactives = List[Tree]()
-    var detectedStaticReactives = List[Tree]()
+    var cutOutReactiveIdentifiers = List[Tree]()
 
-    object transformer extends Transformer {
+    override def transform(tree: Tree): Tree =
+      tree match {
+        // cut signal values out of the signal expression, that could
+        // potentially create a new signal object for every access
+        // it is assumed that such functions are pure in the sense that they
+        // will create an equivalent signal for each call with the same
+        // arguments so the function value has to be calculated just once
+        //
+        // for example, this step transforms
+        //   Signal { event.count.apply() }
+        // to
+        // {
+        //   val s = event.count
+        //   Signal { s() }
+        // }
+        //
+        case reactive@(TypeApply(_, _) | Apply(_, _) | Select(_, _) | Block(_, _) | Typed(_, _))
+          if weAnalysis.isReactiveThatCanBeCutOut(reactive) =>
 
-      override def transform(tree: Tree): Tree =
-        tree match {
-          // replace any used CreationTicket in a Signal expression with the correct turn source for the current turn
-          //q"$_.fromEngineImplicit[..$_](...$_)"
-          case turnSource@Apply(TypeApply(Select(_, TermName("fromEngineImplicit")), _), _)
-            if turnSource.tpe =:= weakTypeOf[CreationTicket[S]] && turnSource.symbol.owner == symbolOf[LowPriorityCreationImplicits] =>
-            println(turnSource)
-            q"${termNames.ROOTPKG}.rescala.core.CreationTicket(${termNames.ROOTPKG}.scala.Left($ticketIdent.creation))(${termNames.ROOTPKG}.rescala.core.REName.create)"
+          // create the signal definition to be cut out of the
+          // macro expression and its substitution variable
+          val cutOutReactiveTermName = TermName(c.freshName("reactive$"))
+          val ident = Ident(cutOutReactiveTermName)
+          val signalDef: ValDef = q"val $cutOutReactiveTermName = $reactive"
 
-          case tree@Select(reactive, TermName("now")) =>
-            c.warning(tree.pos, "Using `now` inside a reactive expression does not create a dependency, " +
-              "and can result in glitches. Use `apply` instead.")
-            super.transform(tree)
-          // Access every reactive through the ticket argument
-          // to obtain dynamic dependencies
-          //
-          // for example, this step transforms
-          //   Signal { reactive_1() + reactive_2() }
-          // to
-          //   Signals.dynamic { s => s.depend(reactive_1) + s.depend(reactive_2) }
-          case tree@REApply(untransformedReactive) =>
-            val reactive = transform(untransformedReactive)
-            detectedReactives ::= reactive
-            val reactiveApply =
-              if (weAnalysis.isStaticDependency(reactive)) {
-                detectedStaticReactives ::= reactive
-                q"$ticketIdent.staticDepend"
-              }
-              else q"$ticketIdent.depend"
-            internal.setType(reactiveApply, tree.tpe)
-            q"$reactiveApply($reactive)"
+          cutOutReactivesVals ::= signalDef
+          cutOutReactiveIdentifiers ::= ident
 
-          // cut signal values out of the signal expression, that could
-          // potentially create a new signal object for every access
-          // it is assumed that such functions are pure in the sense that they
-          // will create an equivalent signal for each call with the same
-          // arguments so the function value has to be calculated just once
-          //
-          // for example, this step transforms
-          //   Signal { event.count.apply() }
-          // to
-          // {
-          //   val s = event.count
-          //   Signal { s() }
-          // }
-          //
-          case reactive@(TypeApply(_, _) | Apply(_, _) | Select(_, _)) if weAnalysis.isReactiveThatCanBeCutOut(reactive) =>
+          internal updateAttachment (ident, IsCutOut)
+          internal setType(ident, reactive.tpe)
+          ident
 
-            // create the signal definition to be cut out of the
-            // macro expression and its substitution variable
-            val cutOutReactiveTermName = TermName(c.freshName("reactive$"))
-
-            val signalDef = q"val $cutOutReactiveTermName = $reactive"
-            cutOutReactiveTerms ::= Ident(cutOutReactiveTermName)
-            cutOutReactivesVals ::= signalDef
-
-            val ident = Ident(cutOutReactiveTermName)
-            internal updateAttachment (ident, IsCutOut)
-            internal setType(ident, reactive.tpe)
-            ident
-
-          case _ =>
-            super.transform(tree)
-        }
-    }
-
-    val innerTree = transformer transform expression.tree
-
-    MacroPieces(innerTree, ticketTermName, cutOutReactivesVals, cutOutReactiveTerms, detectedStaticReactives, detectedReactives)
+        case _ =>
+          super.transform(tree)
+      }
   }
-
-
 
 
   class WholeExpressionAnalysis(expression: Tree) {
@@ -227,11 +276,17 @@ class ReactiveMacros(val c: blackbox.Context) {
     }.nonEmpty
 
     def isReactiveThatCanBeCutOut(reactive: c.universe.Tree): Boolean = {
-      isReactive(reactive) &&
-        reactive.symbol.isTerm &&
-        !reactive.symbol.asTerm.isVal &&
-        !reactive.symbol.asTerm.isVar &&
-        !reactive.symbol.asTerm.isAccessor &&
+      isInterpretable(reactive) &&
+        (reactive match {
+          case Block(_, _) =>
+            true
+          case Typed(expr, _) =>
+            isReactiveThatCanBeCutOut(expr)
+          case _ => reactive.symbol.isTerm &&
+            !reactive.symbol.asTerm.isVal &&
+            !reactive.symbol.asTerm.isVar &&
+            !reactive.symbol.asTerm.isAccessor
+        }) &&
         !containsCriticalReferences(reactive)
     }
 
@@ -243,24 +298,24 @@ class ReactiveMacros(val c: blackbox.Context) {
       "internal warning: tree type was null, " +
         "this should not happen but the signal may still work")
 
-  def isReactive(tree: Tree): Boolean = {
-    val staticSignalClass = c.mirror staticClass "_root_.rescala.reactives.Signal"
-    val staticEventClass = c.mirror staticClass "_root_.rescala.reactives.Event"
+  def isInterpretable(tree: Tree): Boolean = {
+    val staticInterpClass = c.mirror staticClass "_root_.rescala.core.Interp"
 
     if (tree.tpe == null) {treeTypeNullWarning(); false}
     else
       !(tree.tpe <:< definitions.NullTpe) &&
         !(tree.tpe <:< definitions.NothingTpe) &&
-        ((tree.tpe.baseClasses contains staticSignalClass) || (tree.tpe.baseClasses contains staticEventClass))
+        ((tree.tpe.baseClasses contains staticInterpClass))
   }
 
+  /** detects variants to access reactives using [[Interp]] */
   object REApply {
     def unapply(arg: Tree): Option[Tree] = arg match {
-      case Apply(Select(reactive, TermName(tn)), Nil)
-        if List("apply").contains(tn) && isReactive(reactive) =>
+      case Apply(Select(reactive, tn), Nil)
+        if "apply" == tn.decodedName.toString && isInterpretable(reactive) =>
         Some(reactive)
       case Select(reactive, tn)
-        if List("!", "unary_!", "value").contains(tn.decodedName.toString) && isReactive(reactive) =>
+        if "value" == tn.decodedName.toString && isInterpretable(reactive) =>
         Some(reactive)
       case _ => None
     }

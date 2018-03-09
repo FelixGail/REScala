@@ -7,8 +7,7 @@ import benchmarks.{EngineParam, Workload}
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.BenchmarkParams
 import rescala.Engines
-import rescala.benchmarkutil.BenchmarkUtil
-import rescala.core.{Engine, Struct, Turn}
+import rescala.core.{Scheduler, Struct}
 import rescala.reactives.Var
 
 @BenchmarkMode(Array(Mode.Throughput))
@@ -20,11 +19,10 @@ import rescala.reactives.Var
 @State(Scope.Benchmark)
 class SingleVar[S <: Struct] {
 
-  implicit var engine: Engine[S] = _
+  implicit var engine: Scheduler[S] = _
 
   var source: Var[Boolean, S] = _
   var current: Boolean = _
-  var illegalTurn: Turn[S] = _
   var lock: ReadWriteLock = _
 
 
@@ -33,7 +31,6 @@ class SingleVar[S <: Struct] {
     engine = engineParam.engine
     current = false
     source = engine.Var(current)
-    illegalTurn = engine.transaction()(_.creation.asInstanceOf[Turn[S]])
     if (engineParam.engine == Engines.unmanaged) lock = new ReentrantReadWriteLock()
   }
 
@@ -56,20 +53,15 @@ class SingleVar[S <: Struct] {
   @Benchmark
   def read(): Boolean = {
     if (lock == null) {
-      source.now
+      source.readValueOnce
     }
     else {
       lock.readLock().lock()
       try {
-        source.now
+        source.readValueOnce
       }
       finally lock.readLock().unlock()
     }
-  }
-
-  @Benchmark
-  def readIllegal(): Boolean = {
-    BenchmarkUtil.directGet(source, illegalTurn)
   }
 
 }

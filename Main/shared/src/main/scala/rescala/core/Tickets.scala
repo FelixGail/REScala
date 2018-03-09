@@ -1,163 +1,134 @@
 package rescala.core
 
-import rescala.reactives.{Event, Signal}
+import rescala.reactives.Signal
 
 import scala.annotation.implicitNotFound
-import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 import scala.language.implicitConversions
 
-/* tickets are created by the REScala schedulers, to restrict operations to the correct scopes */
+/** [[InnerTicket]]s are used in Rescala to give capabilities to contexts during propagation.
+  * [[ReevTicket]] is used during reevaluation, and [[AdmissionTicket]] during the initialization. */
+class InnerTicket[S <: Struct](val creation: Initializer[S])
 
-// thoughts regarding now, before and after:
-// before: can be used at any time during turns. Thus its parameter should accept implicit turns only.
-//         However, we want to be able to invoke .before inside, e.g., the closure of a .fold, where the turn
-//         is not present in the scope. Thus before also accepts engines, but dynamically checks, that this engine
-//         has a current turn set. This could probably be ensured statically by making sure that every reactive
-//         definition site somehow provides the reevaluating ticket as an implicit in the scope, but I'm not sure
-//         if this is possible without significant syntactical inconvenience.
-//  after: falls under the same considerations as before, with the added exception that it should only accept
-//         turns that completed their admission phase and started their propagation phase. This is currently not
-//         checked at all, but could also be ensured statically the same as above.
-//    now: can be used inside turns only during admission and wrapup, or outside of turns at all times. Since during
-//         admission and wrapup, a corresponding OutsidePropagationTicket is in scope, it accepts these tickets as
-//         high priority implicit parameters. In case such a ticket is not available, it accepts engines, and then
-//         dynamically checks that the engine does NOT have a current turn (in the current thread context). I think
-//         this cannot be ensured statically, as users can always hide implicitly available current turns.
+/** [[ReevTicket]] is given to the [[Reactive]] reevaluate method and allows to access other reactives.
+  * The ticket tracks return values, such as dependencies, the value, and if the value should be propagated.
+  * Such usages make it unsuitable as an API for the user, where [[StaticTicket]] or [[DynamicTicket]] should be used instead.
+  * */
+abstract class ReevTicket[V, S <: Struct](
+                                              creation: Initializer[S],
+                                              private var _before: V,
+                                            ) extends DynamicTicket[S](creation) with Result[V, S] {
 
+  // schedulers implement these to allow access
+  protected def staticAccess(reactive: ReSource[S]): reactive.Value
+  protected def dynamicAccess(reactive: ReSource[S]): reactive.Value
 
-trait AnyTicket extends Any
-
-final class DynamicTicket[S <: Struct] private[rescala](val creation: ComputationStateAccess[S] with Creation[S], val indepsBefore: Set[ReSource[S]]) extends AnyTicket {
-  private[rescala] var indepsAfter: Set[ReSource[S]] = Set.empty
-  private[rescala] var indepsAdded: Set[ReSource[S]] = Set.empty
-
-  private[rescala] def dependDynamic[A](reactive: ReSourciV[A, S]): A = {
-    if (indepsBefore(reactive)) {
-      indepsAfter += reactive
-      creation.staticAfter(reactive)
-    }
-    else if (indepsAdded(reactive)) {
-      creation.staticAfter(reactive)
-    }
-    else {
-      indepsAfter += reactive
-      indepsAdded += reactive
-      creation.dynamicAfter(reactive)
-    }
+  // dependency tracking accesses
+  private[rescala] final override def collectStatic(reactive: ReSource[S]): reactive.Value = {
+    if (collectedDependencies != null) collectedDependencies += reactive
+    staticAccess(reactive)
   }
 
-  private[rescala] def dependStatic[A](reactive: ReSourciV[A, S]): A = {
-    // static dependencies are currently not optimized, for mixed usages
-    dependDynamic(reactive)
+  private[rescala] final override def collectDynamic(reactive: ReSource[S]): reactive.Value = {
+    if (collectedDependencies != null) collectedDependencies += reactive
+    dynamicAccess(reactive)
   }
 
-  def before[A](reactive: Signal[A, S]): A = {
-    creation.dynamicBefore(reactive).get
+  // inline result into ticket, to reduce the amount of garbage during reevaluation
+  private var collectedDependencies: Set[ReSource[S]] = null
+
+  private var _propagate = false
+  private var value: V = _
+  private var effect: () => Unit = null
+  final def before: V = _before
+  final def trackDependencies(): Unit = collectedDependencies = Set.empty
+  final def withPropagate(p: Boolean): ReevTicket[V, S] = {_propagate = p; this}
+  final def withValue(v: V): ReevTicket[V, S] = {require(v != null, "value must not be null"); value = v; _propagate = true; this}
+  final def withEffect(v: () => Unit): ReevTicket[V, S] = {effect = v; this}
+
+
+  final override def propagate: Boolean = _propagate
+  final override def forValue(f: V => Unit): Unit = if (value != null) f(value)
+  final override def forEffect(f: (() => Unit) => Unit): Unit = if (effect != null) f(effect)
+  final override def getDependencies(): Option[Set[ReSource[S]]] = Option(collectedDependencies)
+
+  final def reset[NT](nb: NT): ReevTicket[NT, S] = {
+    _propagate = false
+    value = null.asInstanceOf[V]
+    effect = null
+    collectedDependencies = null
+    val res = this.asInstanceOf[ReevTicket[NT, S]]
+    res._before = nb
+    res
   }
 
-  def depend[A](reactive: Signal[A, S]): A = {
-    dependDynamic(reactive).get
-  }
-
-  def depend[A](reactive: Event[A, S]): Option[A] = {
-    dependDynamic(reactive).toOption
-  }
-
-  def staticDepend[A](reactive: Signal[A, S]): A = {
-    dependStatic(reactive).get
-  }
-
-  def staticDepend[A](reactive: Event[A, S]): Option[A] = {
-    dependStatic(reactive).toOption
-  }
-
-  def indepsRemoved: Set[ReSource[S]] = indepsBefore.diff(indepsAfter)
 }
 
-final class StaticTicket[S <: Struct] private[rescala](val creation: ComputationStateAccess[S] with Creation[S]) extends AnyVal with AnyTicket {
-  private[rescala]  def staticBefore[A](reactive: ReSourciV[A, S]): A = {
-    creation.staticBefore(reactive)
-  }
-  private[rescala] def staticDependPulse[A](reactive: ReSourciV[A, S]): A = {
-    creation.staticAfter(reactive)
-  }
-
-  def staticDepend[A](reactive: Signal[A, S]): A = {
-    staticDependPulse(reactive: ReSourciV[Pulse[A], S]).get
-  }
-
-  def staticDepend[A](reactive: Event[A, S]): Option[A] = {
-    staticDependPulse(reactive: ReSourciV[Pulse[A], S]).toOption
-  }
+/** User facing low level API to access values in a dynamic context. */
+abstract class DynamicTicket[S <: Struct](creation: Initializer[S]) extends StaticTicket[S](creation) {
+  private[rescala] def collectDynamic(reactive: ReSource[S]): reactive.Value
+  final def depend[A](reactive: Interp[A, S]): A = reactive.interpret(collectDynamic(reactive))
 }
 
+/** User facing low level API to access values in a static context. */
+sealed abstract class StaticTicket[S <: Struct](creation: Initializer[S]) extends InnerTicket(creation) {
+  private[rescala] def collectStatic(reactive: ReSource[S]): reactive.Value
+  final def dependStatic[A](reactive: Interp[A, S]): A = reactive.interpret(collectStatic(reactive))
 
-abstract class InitialChange[S <: Struct]{
+}
+
+trait InitialChange[S <: Struct] {
   val source: ReSource[S]
-  def value: source.Value
+  def writeValue(b: source.Value, v: source.Value => Unit): Boolean
 }
 
-final class AdmissionTicket[S <: Struct] private[rescala](val creation: ComputationStateAccess[S] with Creation[S]) extends AnyTicket {
+/** Enables reading of the current value during admission.
+  * Keeps track of written sources internally. */
+abstract class AdmissionTicket[S <: Struct](creation: Initializer[S]) extends InnerTicket(creation) {
+  def access[A](reactive: Signal[A, S]): reactive.Value
+  final def now[A](reactive: Signal[A, S]): A = reactive.interpret(access(reactive))
+
+  private val _initialChanges = ArrayBuffer[InitialChange[S]]()
+  private[rescala] def initialChanges: Iterable[InitialChange[S]] = _initialChanges
+  private[rescala] def recordChange[T](ic: InitialChange[S]): Unit = {
+    assert(!_initialChanges.exists(c => c.source == ic.source), "must not admit same source twice in one turn")
+    _initialChanges += ic
+  }
 
   private[rescala] var wrapUp: WrapUpTicket[S] => Unit = null
-
-  private val _initialChanges: mutable.Map[ReSource[S], InitialChange[S]] = mutable.HashMap()
-  private[rescala] def initialChanges: collection.Map[ReSource[S], InitialChange[S]] = _initialChanges
-  private[rescala] def recordChange[T](ic: InitialChange[S]): Unit = {
-    assert(!_initialChanges.contains(ic.source), "must not admit same source twice in one turn")
-    _initialChanges.put(ic.source, ic)
-  }
-  def now[A](reactive: Signal[A, S]): A = {
-    creation.dynamicBefore(reactive).get
-  }
-}
-
-final class WrapUpTicket[S <: Struct] private[rescala](val creation: ComputationStateAccess[S] with Creation[S]) extends AnyVal with AnyTicket {
-  def now[A](reactive: Signal[A, S]): A = {
-    creation.dynamicAfter(reactive).get
-  }
-  def now[A](reactive: Event[A, S]): Option[A] = {
-    creation.dynamicAfter(reactive).toOption
-  }
 }
 
 
+abstract class WrapUpTicket[S <: Struct] {
+  private[rescala] def access(reactive: ReSource[S]): reactive.Value
+  final def now[A](reactive: Interp[A, S]): A = reactive.interpret(access(reactive))
+}
 
-/**
-  * A turn source that stores a turn/engine and can be applied to a function to call it with the appropriate turn as parameter.
-  *
-  * @param self Turn or engine stored by the turn source
-  * @tparam S Struct type that defines the spore type used to manage the reactive evaluation
-  */
-@implicitNotFound(msg = "could not generate a turn source." +
-  " An available implicit Ticket will serve as turn source, or if no" +
-  " such turn is present, an implicit Engine is accepted instead.")
-final case class CreationTicket[S <: Struct](self: Either[Creation[S], Engine[S]])(val rename: REName) {
+
+/** Enables the creation of other reactives */
+@implicitNotFound(msg = "Could not find capability to create reactives. Maybe a missing import?")
+final case class CreationTicket[S <: Struct](self: Either[Initializer[S], Scheduler[S]])(val rename: REName) {
 
   def isInnerTicket(): Boolean = self.isLeft
-
-  def apply[T](f: Creation[S] => T): T = self match {
+  /** Using the ticket requires to create a new scope, such that we can ensure that everything happens in the same transaction */
+  def apply[T](f: Initializer[S] => T): T = self match {
     case Left(integrated) => f(integrated)
-    case Right(engine) => engine.create(f)
+    case Right(engine) => engine.creationDynamicLookup(f)
   }
 }
 
+/** As reactives can be created during propagation, any [[InnerTicket]] can be converted to a creation ticket. */
 object CreationTicket extends LowPriorityCreationImplicits {
-  implicit def fromTicketAImplicit[S <: Struct](implicit ticket: AdmissionTicket[S], line: REName): CreationTicket[S] = CreationTicket(Left(ticket.creation))(line)
-  //implicit def fromTicketA[S <: Struct](ticket: AdmissionTicket[S])(implicit line: REName): CreationTicket[S] = CreationTicket(Left(ticket.creation))
+  implicit def fromTicketImplicit[S <: Struct](implicit ticket: InnerTicket[S], line: REName): CreationTicket[S] = CreationTicket(Left(ticket.creation))(line)
 
-  implicit def fromTicketSImplicit[S <: Struct](implicit ticket: StaticTicket[S], line: REName): CreationTicket[S] = CreationTicket(Left(ticket.creation))(line)
-  //implicit def fromTicketS[S <: Struct](ticket: StaticTicket[S])(implicit line: REName): CreationTicket[S] = CreationTicket(Left(ticket.creation))
-
-  implicit def fromTicketDImplicit[S <: Struct](implicit ticket: DynamicTicket[S], line: REName): CreationTicket[S] = CreationTicket(Left(ticket.creation))(line)
-  //implicit def fromTicketD[S <: Struct](ticket: DynamicTicket[S])(implicit line: REName): CreationTicket[S] = CreationTicket(Left(ticket.creation))
-
-  implicit def fromCreationImplicit[S <: Struct](implicit creation: Creation[S], line: REName): CreationTicket[S] = CreationTicket(Left(creation))(line)
-  implicit def fromCreation[S <: Struct](creation: Creation[S])(implicit line: REName): CreationTicket[S] = CreationTicket(Left(creation))(line)
+  implicit def fromCreationImplicit[S <: Struct](implicit creation: Initializer[S], line: REName): CreationTicket[S] = CreationTicket(Left(creation))(line)
+  implicit def fromCreation[S <: Struct](creation: Initializer[S])(implicit line: REName): CreationTicket[S] = CreationTicket(Left(creation))(line)
 }
 
+/** If no [[InnerTicket]] is found, then these implicits will search for a [[Scheduler]],
+  * creating the reactives outside of any turn. */
 sealed trait LowPriorityCreationImplicits {
-  implicit def fromEngineImplicit[S <: Struct](implicit factory: Engine[S], line: REName): CreationTicket[S] = CreationTicket(Right(factory))(line)
-  implicit def fromEngine[S <: Struct](factory: Engine[S])(implicit line: REName): CreationTicket[S] = CreationTicket(Right(factory))(line)
-  implicit def fromNameImplicit[S <: Struct](line: String)(implicit factory: Engine[S]): CreationTicket[S] = CreationTicket(Right(factory))(line)
+  implicit def fromEngineImplicit[S <: Struct](implicit factory: Scheduler[S], line: REName): CreationTicket[S] = CreationTicket(Right(factory))(line)
+  implicit def fromEngine[S <: Struct](factory: Scheduler[S])(implicit line: REName): CreationTicket[S] = CreationTicket(Right(factory))(line)
+  implicit def fromNameImplicit[S <: Struct](line: String)(implicit outer: CreationTicket[S]): CreationTicket[S] = CreationTicket(outer.self)(line)
 }

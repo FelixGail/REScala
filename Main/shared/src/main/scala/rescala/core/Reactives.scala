@@ -1,39 +1,67 @@
 package rescala.core
 
+import scala.annotation.compileTimeOnly
 import scala.language.higherKinds
 
 
-trait Struct { type State[P, S <: Struct] }
+/** Every [[ReSource]] has an internal data[[Struct]]ure which is externally defined by the scheduler.
+  * Its main use is to allow the external algorithm to manage concurrency for the internal data.
+  * Using the indirection with the State type here allows us to not have unbound type parameters everywhere. */
+trait Struct { type State[V, S <: Struct] }
 
+/** Source of (reactive) values, the [[Struct]] defines how the state is stored internally,
+  * and how dependencies are managed.
+  * State can only be accessed with a correct [[InnerTicket]].
+  *
+  * @tparam S [[Struct]] defining the internal state */
 trait ReSource[S <: Struct] {
   type Value
-  protected[rescala] def state: S#State[Value, S]
+  final type State = S#State[Value, S]
+  protected[rescala] def state: State
 }
 
-/** A reactive value is something that can be reevaluated
-  *
-  * @tparam S Defines the structure of the internal state, as used by the propagation engine.
-  */
+/** A reactive value is something that can be reevaluated */
 trait Reactive[S <: Struct] extends ReSource[S] {
 
-  /** Internal state of this reactive, managed by the propagation engine */
-  protected[rescala] def reevaluate(turn: Turn[S], before: Value, indeps: Set[ReSource[S]]): ReevaluationResult[Value, S]
+  final type ReIn = ReevTicket[Value, S]
+  final type Rout = Result[Value, S]
+
+  /** called if any of the dependencies ([[ReSource]]s) changed in the current update turn,
+    * after all (known) dependencies are updated */
+  protected[rescala] def reevaluate(input: ReIn): Rout
 }
 
-trait ReSourciV[+P, S <: Struct] extends ReSource[S] { type Value <: P}
+/** Base implementation for reactives, with [[Reactive]] for scheduling,
+  * together with a [[REName]] and asking for a [[Struct.State]]
+  * @param initialState the initial state passed by the scheduler
+  * @param rename the name of the reactive, useful for debugging as it often contains positional information */
+abstract class Base[V, S <: Struct](initialState: S#State[V, S], rename: REName)
+  extends RENamed(rename) with Reactive[S] {
+  override type Value = V
+  final override protected[rescala] def state: State = initialState
+}
 
-/**
-  * A reactive with a known value type, such that user computations can read values from (e.g., before, after, etc.)
-  *
-  * @tparam P Value type stored by the reactive
-  * @tparam S Struct type that defines the spore type used to manage the reactive evaluation
-  */
-trait ReactiV[+P, S <: Struct] extends ReSourciV[P, S] with Reactive[S]
 
-/**
-  * A base implementation for all reactives, tying together the Readable interface for user computations and the Writeable interface for schedulers.
-  */
-abstract class Base[P, S <: Struct](initialState: S#State[Pulse[P], S], rename: REName) extends RENamed(rename) with ReactiV[Pulse[P], S] with Reactive[S] {
-  override type Value = Pulse[P]
-  final override protected[rescala] def state: S#State[Pulse[P], S] = initialState
+/** Common macro accessors for [[rescala.reactives.Signal]] and [[rescala.reactives.Event]]
+  * @tparam A return type of the accessor
+  * @groupname accessor Accessor and observers */
+trait Interp[+A, S <: Struct] extends ReSource[S] {
+  /** Makes the enclosing reactive expression depend on the current value of the reactive.
+    * Is an alias for [[value]].
+    * @group accessor
+    * @see value*/
+  @compileTimeOnly(s"$this apply can only be used inside of reactive expressions")
+  final def apply(): A = throw new IllegalAccessException(s"$this.apply called outside of macro")
+
+  /** Makes the enclosing reactive expression depend on the current value of the reactive.
+    * Is an alias for [[apply]].
+    * @group accessor
+    * @see apply*/
+  @compileTimeOnly("value can only be used inside of reactive expressions")
+  final def value: A = throw new IllegalAccessException(s"$this.value called outside of macro")
+
+  /** Interprets the internal type to the external type
+    * @group internal */
+  def interpret(v: Value): A
+
 }

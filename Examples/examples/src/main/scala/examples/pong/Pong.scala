@@ -31,7 +31,7 @@ class Pong(val tick: Evt[Unit], val mouse: Mouse) {
   val rightRacket = new Racket(RightRacketPos, y)
 
   val rackets = Signal {List(leftRacket, rightRacket)}
-  val areas = Signal {rackets().map(_.area())}
+  val areas = Signal.dynamic {rackets().map(_.area())}
   val ballInRacket = Signal {areas().exists(_.contains(x(), y()))}
   val collisionRacket = ballInRacket.changedTo(true)
 
@@ -44,8 +44,8 @@ class Pong(val tick: Evt[Unit], val mouse: Mouse) {
   val speedX = xBounce.toggle(Var(speed.x), Var(-speed.x))
   val speedY = yBounce.toggle(Var(speed.y), Var(-speed.y))
 
-  val pointsPlayer = rightWall.iterate(0)(_ + 1)
-  val pointsComputer = leftWall.iterate(0)(_ + 1)
+  val pointsPlayer = rightWall.count()
+  val pointsComputer = leftWall.count()
 
   val score = Signal {pointsPlayer() + " : " + pointsComputer()}
 }

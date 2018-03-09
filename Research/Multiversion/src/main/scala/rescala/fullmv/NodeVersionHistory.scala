@@ -3,8 +3,12 @@ package rescala.fullmv
 //import java.util.concurrent.ForkJoinPool.ManagedBlocker
 import java.util.concurrent.locks.LockSupport
 
+import rescala.core.Initializer.InitValues
+
+import scala.concurrent.Await
+//import java.util.concurrent.locks.LockSupport
+
 import rescala.core.Pulse.Exceptional
-import rescala.core.ValuePersistency
 import rescala.fullmv.NodeVersionHistory._
 
 import scala.annotation.elidable.ASSERTION
@@ -52,7 +56,7 @@ object NotificationResultAction {
   * @tparam InDep the type of incoming dependency nodes
   * @tparam OutDep the type of outgoing dependency nodes
   */
-class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePersistency: ValuePersistency[V]) extends FullMVState[V, T, InDep, OutDep] {
+class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePersistency: InitValues[V]) extends FullMVState[V, T, InDep, OutDep] {
   class Version(val txn: T, @volatile var lastWrittenPredecessorIfStable: Version, var out: Set[OutDep], var pending: Int, var changed: Int, @volatile var value: Option[V]) /*extends MyManagedBlocker*/ {
     // txn >= Executing, stable == true, node reevaluation completed changed
     def isWritten: Boolean = changed == 0 && value.isDefined
@@ -81,52 +85,23 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
       value.get
     }
 
-//    @volatile var finalWaiters: Int = 0
     @volatile var stableWaiters: Int = 0
-//    override def blockForFinal(): Boolean = {
-//      finalWaiters += 1
-//      assert(Thread.currentThread() == txn.userlandThread, s"this assertion is only valid without a threadpool .. otherwise it should be txn==txn, but that would require txn to be spliced in here which is annoying while using the managedblocker interface")
-//      if(!isReleasable) {
-//        if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] parking for final $this.")
-//        LockSupport.park(NodeVersionHistory.this)
-//        if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] unparked on $this.")
-//      }
-//      finalWaiters -= 1
-//      isReleasable
-//    }
-//
-//    override def isReleasable: Boolean = isFinal
-
-    // common blocking case (now, dynamicDepend): Use self as blocker instance to reduce garbage
-//    def blockForFinal: MyManagedBlocker = this
 
     // less common blocking case
     // fake lazy val without synchronization, because it is accessed only while the node's monitor is being held.
     def blockForStable(): Unit = {
       if (!isStable) {
-        //    private var _blockForStable: MyManagedBlocker = null
-        //    def blockForStable: MyManagedBlocker = {
-        //      if(_blockForStable == null) {
-        //        _blockForStable = new MyManagedBlocker {
-        //          override def block(): Boolean = {
         stableWaiters += 1
         assert(Thread.currentThread() == txn.userlandThread, s"this assertion is only valid without a threadpool .. otherwise it should be txn==txn, but that would require txn to be spliced in here which is annoying while using the managedblocker interface")
         while (!isStable) {
           if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] parking for stable ${Version.this}")
           LockSupport.park(NodeVersionHistory.this)
+          NodeVersionHistory.this.wait()
           if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] unparked on ${Version.this}")
         }
         stableWaiters -= 1
-        //            isReleasable
-        //          }
-        //          override def isReleasable: Boolean = isStable
-        //        }
-        //      }
-        //      _blockForStable
-        //    }
       }
     }
-
 
     override def toString: String = {
       if(isWritten){
@@ -334,14 +309,14 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     assert(minPos >= firstFrame, s"nonsensical minpos $minPos < firstFrame $firstFrame")
     assert(firstFrame < size, s"a propagating turn may not have a version when looking for a frame, but there must be *some* frame.")
     if(minPos == size) {
-      assert(txn.isTransitivePredecessor(_versions(minPos - 1).txn), s"knownOrderedMinPos $minPos for $txn: predecessor ${_versions(minPos - 1).txn} not ordered")
+      assert(txn.isTransitivePredecessor(_versions(minPos - 1).txn), s"knownOrderedMinPos $minPos for $txn: predecessor ${_versions(minPos - 1).txn} not ordered in $this")
       arrangeVersionArrayAndCreateVersion(minPos, txn)
     } else if (_versions(minPos).txn == txn) {
       // common-case shortcut attempt: receive notification for firstFrame
       lastGCcount = 0
       minPos
     } else {
-      assert(minPos == firstFrame || txn.isTransitivePredecessor(_versions(minPos - 1).txn), s"minPos $minPos was given for $txn, which should have the predecessor version's ${_versions(minPos - 1).txn} as predecessor transaction, but had not")
+      assert(minPos == firstFrame || txn.isTransitivePredecessor(_versions(minPos - 1).txn), s"minPos $minPos was given for $txn, which should have the predecessor version's ${_versions(minPos - 1).txn} as predecessor transaction, but had not in $this")
       assert(minPos > firstFrame || txn.isTransitivePredecessor(_versions(firstFrame).txn), s"propagating $txn at minPos $minPos assumes it has a frame but is not ordered after the firstFrame ${_versions(firstFrame).txn} in $this")
       val (insertOrFound, _) = findOrPigeonHolePropagatingPredictive(txn, minPos, fromFinalPredecessorRelationIsRecorded = true, size, toFinalRelationIsRecorded = true, UnlockedUnknown)
       if (insertOrFound < 0) {
@@ -413,6 +388,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
       val unlocked = changedSCCState.unlockedIfLocked()
       if(fromOrderedSuccessfully == Succeeded) {
         (-fromSpeculative, UnlockedSameSCC)
+        (-fromSpeculative, unlocked)
       } else {
         assert(unlocked == UnlockedSameSCC, s"establishing from relationship failed, but $lookFor is supposedly not in same SCC")
         findOrPigeonHoleFramingPredictive0(lookFor, fromFinal, fromFinalPredecessorRelationIsRecorded, fromFinal - 1, fromSpeculative, UnlockedSameSCC)
@@ -448,6 +424,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
   private def findOrPigeonHolePropagatingPredictive(lookFor: T, fromFinal: Int, fromFinalPredecessorRelationIsRecorded: Boolean, toFinal: Int, toFinalRelationIsRecorded: Boolean, sccState: SCCConnectivity): (Int, SCCConnectivity) = {
     assert(fromFinal <= toFinal, s"binary search started with backwards indices from $fromFinal to $toFinal")
     assert(toFinal <= size, s"binary search upper bound $toFinal beyond history size $size")
+    // the following assert possibly requires an additional || _versions(toFinal).txn == lookFor
     assert(toFinal == size || !(lookFor.isTransitivePredecessor(_versions(toFinal).txn) || _versions(toFinal).txn.phase == TurnPhase.Completed), s"to = $toFinal successor for non-blocking search of known static $lookFor pointed to version of ${_versions(toFinal).txn} which is ordered earlier in $this")
     assert(!_versions(fromFinal - 1).txn.isTransitivePredecessor(lookFor), s"from - 1 = ${fromFinal - 1} predecessor for non-blocking search of $lookFor pointed to version of ${_versions(fromFinal - 1).txn} which is already ordered later in $this")
     assert(fromFinal > 0, s"binary search started with non-positive lower bound $fromFinal")
@@ -741,7 +718,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
       // common-case shortcut attempt: read latest completed reevaluation
       latestReevOut
     } else {
-      val res = findOrPigeonHolePropagatingPredictive(txn, latestGChint + 1, fromFinalPredecessorRelationIsRecorded = true, firstFrame, toFinalRelationIsRecorded = firstFrame == size, UnlockedSameSCC)._1
+      val res = findOrPigeonHolePropagatingPredictive(txn, latestGChint + 1, fromFinalPredecessorRelationIsRecorded = true, firstFrame, toFinalRelationIsRecorded = firstFrame == size, UnlockedUnknown /* minor TODO might be able to have KnownSame here? */)._1
       assert(res < 0 || _versions(res).isFinal, s"found version $res of $txn isn't final in $this")
       assert(res < 0 || _versions(res).txn == txn, s"found version $res doesn't belong to $txn in $this")
       assert(res >= 0 || _versions(-res - 1).isFinal, s"predecessor version of insert point $res of $txn isn't final in $this")
@@ -847,11 +824,16 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
   }
 
   @tailrec private def stabilizeForwardsUntilFrame(stabilizeTo: Version): Unit = {
-//    val finalized = _versions(firstFrame)
-//    if(finalized.finalWaiters > 0) {
-//      if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] unparking ${finalized.txn.userlandThread.getName} after finalized $finalized.")
-//      LockSupport.unpark(finalized.txn.userlandThread)
-//    }
+    firstFrame += 1
+    if (firstFrame < size) {
+      val stabilized = _versions(firstFrame)
+      assert(!stabilized.isStable, s"cannot stabilize $firstFrame: $stabilized")
+      stabilized.lastWrittenPredecessorIfStable = stabilizeTo
+      if(stabilized.stableWaiters > 0) {
+        if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] unparking ${stabilized.txn.userlandThread.getName} after stabilized $stabilized.")
+        LockSupport.unpark(stabilized.txn.userlandThread)
+      NodeVersionHistory.this.notifyAll()
+    }
     firstFrame += 1
     if (firstFrame < size) {
       val stabilized = _versions(firstFrame)
@@ -948,6 +930,10 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * return the resulting notification out (with reframing if subsequent write is found).
     */
   override def reevOut(turn: T, maybeValue: Option[V]): NotificationResultAction.ReevOutResult[T, OutDep] = synchronized {
+    maybeValue match {
+      case Some(rescala.core.Pulse.Exceptional(t)) => t.printStackTrace()
+      case _ => //ignore
+    }
     val position = firstFrame
     val version = _versions(position)
     assert(version.txn == turn, s"$turn called reevDone, but first frame is $version (different transaction)")
@@ -960,7 +946,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
       version.changed = 0
       latestReevOut = position
       val stabilizeTo = if (maybeValue.isDefined) {
-        if(!valuePersistency.isTransient) latestValue = maybeValue.get
+        latestValue = valuePersistency.unchange.unchange(maybeValue.get)
         if(FullMVEngine.DEBUG && latestValue.isInstanceOf[Exceptional]){
           println(s"[${Thread.currentThread().getName}] WARNING: glitch free evaluation result is exceptional:")
           latestValue.asInstanceOf[Exceptional].throwable.printStackTrace()
@@ -1064,17 +1050,13 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     val version = synchronized {
       val pos = ensureReadVersion(txn)
       // DO NOT INLINE THIS! it breaks the code! see https://scastie.scala-lang.org/briJDRO3RCmIMEd1zApmBQ
-      _versions(pos) }
+      _versions(pos)
+    }
     if(!version.isStable) version.blockForStable()
-    if(!version.isFinal) latestValue else
-//    if(!version.isFinal) throw new AssertionError("currently not supported")
-//    if(!version.isFinal) version.blockForFinal()
     if (version.value.isDefined) {
       version.value.get
-    } else if(valuePersistency.isTransient) {
-      valuePersistency.initialValue
     } else {
-      version.lastWrittenPredecessorIfStable.value.get
+      valuePersistency.unchange.unchange(version.lastWrittenPredecessorIfStable.value.get)
     }
   }
 
@@ -1083,12 +1065,14 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
       val pos = findFinalPosition(txn)
       _versions(if (pos < 0) -pos - 1 else pos)
     }
-    if(valuePersistency.isTransient && (version.txn != txn || version.value.isEmpty)) {
-      valuePersistency.initialValue
-    } else if (version.value.isDefined) {
-      version.value.get
+    if(version.value.isDefined) {
+      if(version.txn == txn) {
+        version.value.get
+      } else {
+        valuePersistency.unchange.unchange(version.value.get)
+      }
     } else {
-      version.lastWrittenPredecessorIfStable.value.get
+      valuePersistency.unchange.unchange(version.lastWrittenPredecessorIfStable.value.get)
     }
   }
 

@@ -1,7 +1,5 @@
 package examples.demo
 
-import java.awt.Color
-
 import examples.demo.GModularClockCircle.Clock
 import examples.demo.ui.{Circle, Point, Shape, ShapesPanel}
 import rescala._
@@ -55,31 +53,26 @@ import rescala._
   * ShapesPanel.
   */
 object LFullyModularBall extends Main {
-  class BouncingBall(val initVx: Double, val initVy: Double, val diameter: Signal[Int], val resetIn: Event[Point]) {
+  class BouncingBall(val initVx: Double, val initVy: Double, val diameter: Signal[Int], val reset: Event[Point]) {
     val horizontalBounceSources: Var[List[Event[Any]]] = Var(List())
     val verticalBounceSources: Var[List[Event[Any]]] = Var(List())
     val filteredHorizontalBounceSources = horizontalBounceSources.map(_.map(_.recover{case _: IllegalArgumentException => None}))
 
-    val velocityX = filteredHorizontalBounceSources.flatten[Event[List[Option[Any]]]]
-                    .fold(initVx / Clock.NanoSecond) { (old, _) => -old }
-    val velocityY = verticalBounceSources.flatten[Event[List[Option[Any]]]]
-                    .fold(initVy / Clock.NanoSecond) { (old, _ ) => -old }
+    val velocity = Signal { Pos(
+      x = filteredHorizontalBounceSources.flatten[Event[List[Option[Any]]]]
+        .fold(initVx / Clock.NanoSecond) { (old, _) => -old }.value,
+      y = verticalBounceSources.flatten[Event[List[Option[Any]]]]
+        .fold(initVy / Clock.NanoSecond) { (old, _ ) => -old }.value)}
 
-    val incX = Clock.ticks.dMap(dt => tick => Right[Point, Double](tick.toDouble * dt.before(velocityX)))
-    val incY = Clock.ticks.dMap(dt => tick => Right[Point, Double](tick.toDouble * dt.before(velocityY)))
+    //TODO: using now to remove cycle …
+    val inc = Clock.ticks.map(tick => velocity.now * tick.toDouble)
 
-    val reset = resetIn.map(pos => Left[Point, Double](pos))
+    val pos = Events.foldAll(Pos(0,0))( acc => Events.Match(
+      reset >> { case Point(x, y) => Pos(x, y) },
+      inc >>  { inc => acc + inc },
+    ))
 
-    val posX = (reset || incX).fold(0d){
-      case (_, Left(Point(x, _))) => x.toDouble
-      case (pX, Right(inc)) => pX + inc
-    }
-    val posY = (reset || incY).fold(0d){
-      case (_, Left(Point(_, y))) => y.toDouble
-      case (pY, Right(inc)) => pY + inc
-    }
-
-    val shape = new Circle(posX.map(_.toInt), posY.map(_.toInt), diameter, fill = Var(Some(Color.GREEN)))
+    val shape = new Circle(pos, diameter)
   }
 
   val shapes = Var[List[Shape]](List.empty)

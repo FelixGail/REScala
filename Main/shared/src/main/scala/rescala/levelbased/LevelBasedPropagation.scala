@@ -1,6 +1,6 @@
 package rescala.levelbased
 
-import rescala.core.{InitialChange, ReSource, Reactive, ReevaluationResult}
+import rescala.core.{InitialChange, ReSource, Reactive, ReevTicket}
 import rescala.twoversion.TwoVersionPropagationImpl
 
 import scala.collection.mutable.ArrayBuffer
@@ -11,63 +11,63 @@ import scala.collection.mutable.ArrayBuffer
   * @tparam S Struct type that defines the spore type used to manage the reactive evaluation
   */
 trait LevelBasedPropagation[S <: LevelStruct] extends TwoVersionPropagationImpl[S] with LevelQueue.Evaluator[S] {
-  private val _changed = ArrayBuffer[ReSource[S]]()
+  private val _propagating = ArrayBuffer[ReSource[S]]()
 
   val levelQueue = new LevelQueue[S](this)(this)
 
   override def clear(): Unit = {
     super.clear()
-    _changed.clear()
+    _propagating.clear()
   }
 
-  override def evaluate(head: Reactive[S]): Unit = {
-    val res = head.reevaluate(this, head.state.base(token), head.state.incoming(this))
-    if (!res.indepsChanged) {
-      applyResult(head)(res)
+  val reevaluaitonTicket: ReevTicket[_, S] = makeDynamicReevaluationTicket(null)
+
+  override def evaluate(r: Reactive[S]): Unit = evaluateIn(r)(reevaluaitonTicket.reset(r.state.base(token)))
+  def evaluateIn(head: Reactive[S])(dt: ReevTicket[head.Value, S]): Unit = {
+    val reevRes = head.reevaluate(dt)
+
+    val dependencies: Option[Set[ReSource[S]]] = reevRes.getDependencies()
+    val minimalLevel = dependencies.fold(0)(maximumLevel(_) + 1)
+    val redo = head.state.level() < minimalLevel
+    if (redo) {
+      levelQueue.enqueue(minimalLevel)(head)
     } else {
-      val newLevel = maximumLevel(res.indepsAfter) + 1
-      val redo = head.state.level(this) < newLevel
-      if (redo) {
-        levelQueue.enqueue(newLevel)(head)
-      } else {
-        res.commitDependencyDiff(this, head)
-        applyResult(head, newLevel)(res)
-      }
+      dependencies.foreach(commitDependencyDiff(head, head.state.incoming()))
+      reevRes.forValue(writeState(head))
+      reevRes.forEffect(observe)
+      if (reevRes.propagate) enqueueOutgoing(head, minimalLevel)
     }
   }
 
-  private def applyResult(head: ReSource[S], minLevel: Int = -42)(res: ReevaluationResult[head.Value, S]): Unit =
-    if (res.valueChanged) writeValue(head, minLevel)(res.value)
-
-  private def writeValue(head: ReSource[S], minLevel: Int = -42)(value: head.Value): Unit = {
-    writeState(head)(value)
-    head.state.outgoing(this).foreach(levelQueue.enqueue(minLevel))
-    _changed += head
+  private def enqueueOutgoing(head: ReSource[S], minLevel: Int = -42) = {
+    head.state.outgoing().foreach(levelQueue.enqueue(minLevel))
+    _propagating += head
   }
 
-  private def maximumLevel(dependencies: Set[ReSource[S]]): Int = dependencies.foldLeft(-1)((acc, r) => math.max(acc, r.state.level(this)))
+  private def maximumLevel(dependencies: Set[ReSource[S]]): Int = dependencies.foldLeft(-1)((acc, r) => math.max(acc, r.state.level()))
 
   override protected def ignite(reactive: Reactive[S], incoming: Set[ReSource[S]], ignitionRequiresReevaluation: Boolean): Unit = {
-    val level = if (incoming.isEmpty) 0 else incoming.map(_.state.level(this)).max + 1
-    reactive.state.updateLevel(level)(this)
+    val level = if (incoming.isEmpty) 0 else incoming.map(_.state.level()).max + 1
+    reactive.state.updateLevel(level)
 
     incoming.foreach { dep =>
       dynamicDependencyInteraction(dep)
       discover(dep, reactive)
     }
-    reactive.state.updateIncoming(incoming)(this)
+    reactive.state.updateIncoming(incoming)
 
-    if (ignitionRequiresReevaluation || incoming.exists(_changed.contains)) {
+    if (ignitionRequiresReevaluation || incoming.exists(_propagating.contains)) {
       if (level <= levelQueue.currentLevel()) {
-        evaluate(reactive)
+        evaluateIn(reactive)(makeDynamicReevaluationTicket(reactive.state.base(token)))
       } else {
         levelQueue.enqueue(level)(reactive)
       }
     }
   }
 
-  override def initializationPhase(initialChanges: Traversable[InitialChange[S]]): Unit = initialChanges.foreach { ic =>
-    writeValue(ic.source)(ic.value)
+  final override def initialize(ic: InitialChange[S]): Unit = {
+    val n = ic.writeValue(ic.source.state.base(token), writeState(ic.source))
+    if (n) enqueueOutgoing(ic.source)
   }
 
   def propagationPhase(): Unit = levelQueue.evaluateQueue()

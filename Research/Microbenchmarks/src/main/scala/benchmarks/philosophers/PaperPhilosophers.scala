@@ -2,7 +2,7 @@ package benchmarks.philosophers
 
 import java.util.concurrent.{Executors, ThreadLocalRandom}
 
-import rescala.core.{Engine, Pulse, REName, Struct}
+import rescala.core.{Scheduler, Pulse, REName, Struct}
 import rescala.fullmv.FullMVStruct
 import rescala.parrp.Backoff
 
@@ -11,7 +11,7 @@ import scala.concurrent.{Await, Future, TimeoutException}
 import scala.concurrent.duration._
 import scala.util.{Failure, Success, Try}
 
-abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Engine[S], dynamicEdgeChanges: Boolean) {
+abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Scheduler[S], dynamicEdgeChanges: Boolean) {
   import engine._
 
   sealed trait Philosopher
@@ -29,7 +29,7 @@ abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Engine[
 
   val forks = for(idx <- 0 until size) yield
     REName.named(s"fork($idx)"){ implicit! =>
-      Signal[Fork] {
+      Signal.dynamic[Fork] {
         val nextIdx = (idx + 1) % size
         (phils(idx)(), phils(nextIdx)()) match {
           case (Thinking, Thinking) => Free
@@ -48,7 +48,7 @@ abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Engine[
   // Dynamic Sight
   val sights = for(idx <- 0 until size) yield
     REName.named(s"sight($idx)") { implicit ! =>
-      Signal[Sight] {
+      Signal.dynamic[Sight] {
         val prevIdx = (idx - 1 + size) % size
         if(dynamicEdgeChanges) {
           forks(prevIdx)() match {
@@ -92,7 +92,7 @@ abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Engine[
     }
   }
   def hasEaten(idx: Int): Boolean = {
-    sights(idx).now == Done
+    sights(idx).readValueOnce == Done
   }
   def rest(idx: Int): Unit = {
     phils(idx).set(Thinking)
@@ -117,7 +117,7 @@ abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Engine[
   // To be implemented by your choice of topper (see below)
   val successCount: Signal[Int]
 
-  def total: Int = successCount.now
+  def total: Int = successCount.readValueOnce
 }
 
 trait EventTopper[S <: Struct] {
@@ -161,10 +161,9 @@ trait TransposeTopper[S <: Struct] {
 //    individualCounts.map(_()).sum
 ////    individualCounts.foldLeft(0){ (sum, signal) => sum + signal() }
 //  }
-  override val successCount: Signal[Int] = {
-  val t = implicitly[CreationTicket]
-  t{ Signals.staticFold[Int, S](successes.toSet[ReSource], Pulse.Value(0)) { (ticket, before) => before() + 1 } (_)(t.rename) }
-}
+
+
+  override val successCount: Signal[Int] = Events.fold(successes.toSet[ReSource], 0){(ticket, before) => before() + 1}
 }
 
 object PaperPhilosophers {
@@ -209,9 +208,7 @@ object PaperPhilosophers {
     while(threads.exists(!_.isCompleted) && continue()) { Thread.sleep(10) }
     val timeout = System.currentTimeMillis() + 3000
     val scores = threads.map{ t =>
-      Try { Await.ready(t, (timeout - System.currentTimeMillis()).millis ) }.flatMap {
-        _ => t.value.get
-      }
+      Try { Await.result(t, (timeout - System.currentTimeMillis()).millis ) }
     }
     executor.shutdown()
 
@@ -227,6 +224,7 @@ object PaperPhilosophers {
     }
     if(scores.exists(_.isFailure)) {
       println("There were failures -> not accessing total score")
+      println("Thread pool state: "+engine.threadPool)
     } else {
       val individualsSum = scores.map(_.get).sum
       if(table.total == individualsSum){
@@ -235,5 +233,7 @@ object PaperPhilosophers {
         println("Total score: " + table.total + " (differs from individual scores' sum of " + individualsSum + ")")
       }
     }
+    println(engine.instances.size() + " turn instances remain.")
+    println(engine.lockHost.instances.size() + " lock instances remain.")
   }
 }

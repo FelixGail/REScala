@@ -1,6 +1,7 @@
 package rescala.twoversion
 
 import rescala.core._
+import rescala.reactives.Signal
 
 import scala.util.control.NonFatal
 
@@ -10,7 +11,7 @@ import scala.util.control.NonFatal
   *
   * @tparam S Struct type that defines the spore type used to manage the reactive evaluation
   */
-trait TwoVersionPropagationImpl[S <: TwoVersionStruct] extends TwoVersionPropagation[S] with TurnImpl[S] {
+trait TwoVersionPropagationImpl[S <: TwoVersionStruct] extends TwoVersionPropagation[S] with Initializer[S] {
   outer =>
 
   private var _token: Token = Token()
@@ -27,12 +28,9 @@ trait TwoVersionPropagationImpl[S <: TwoVersionStruct] extends TwoVersionPropaga
 
   override def schedule(commitable: Committable[S]): Unit = toCommit += commitable
 
-  override def observe(f: () => Unit): Unit = observers += f
+  def observe(f: () => Unit): Unit = observers += f
 
-  override def commitPhase(): Unit = {
-    val it = toCommit.iterator
-    while (it.hasNext) it.next().commit(this)
-  }
+  override def commitPhase(): Unit = toCommit.foreach{_.commit(this)}
 
   override def rollbackPhase(): Unit = {
     val it = toCommit.iterator
@@ -40,37 +38,55 @@ trait TwoVersionPropagationImpl[S <: TwoVersionStruct] extends TwoVersionPropaga
   }
 
   override def observerPhase(): Unit = {
-    val it = observers.iterator
     var failure: Throwable = null
-    while (it.hasNext) {
-      try {
-        it.next().apply()
-      }
-      catch {
-        case NonFatal(e) => failure = e
-      }
+    observers.foreach { n =>
+      try n.apply()
+      catch {case NonFatal(e) => failure = e}
     }
-    // find the first failure and rethrow the contained exception
+    // find some failure and rethrow the contained exception
     // we should probably aggregate all of the exceptions,
     // but this is not the place to invent exception aggregation
     if (failure != null) throw failure
   }
 
-  override private[rescala] def discover(node: ReSource[S], addOutgoing: Reactive[S]): Unit = node.state.discover(addOutgoing)(this)
-  override private[rescala] def drop(node: ReSource[S], removeOutgoing: Reactive[S]): Unit = node.state.drop(removeOutgoing)(this)
 
-  override private[rescala] def writeIndeps(node: Reactive[S], indepsAfter: Set[ReSource[S]]): Unit = node.state.updateIncoming(indepsAfter)(this)
+  def initialize(ic: InitialChange[S]): Unit
+
+  final override def initializationPhase(initialChanges: Traversable[InitialChange[S]]): Unit = initialChanges.foreach(initialize)
+
+  final def commitDependencyDiff(node: Reactive[S], current: Set[ReSource[S]])(updated: Set[ReSource[S]]): Unit = {
+    val indepsRemoved = current -- updated
+    val indepsAdded = updated -- current
+    indepsRemoved.foreach(drop(_, node))
+    indepsAdded.foreach(discover(_, node))
+    writeIndeps(node, updated)
+  }
+
+  private[rescala] def discover(node: ReSource[S], addOutgoing: Reactive[S]): Unit = node.state.discover(addOutgoing)
+  private[rescala] def drop(node: ReSource[S], removeOutgoing: Reactive[S]): Unit = node.state.drop(removeOutgoing)
+
+  private[rescala] def writeIndeps(node: Reactive[S], indepsAfter: Set[ReSource[S]]): Unit = node.state.updateIncoming(indepsAfter)
 
   /** allow turn to handle dynamic access to reactives */
   def dynamicDependencyInteraction(dependency: ReSource[S]): Unit
 
-  override private[rescala] def staticBefore[P](reactive: ReSourciV[P, S]) = reactive.state.base(token)
-  override private[rescala] def staticAfter[P](reactive: ReSourciV[P, S]) = reactive.state.get(token)
-  override private[rescala] def dynamicBefore[P](reactive: ReSourciV[P, S]) = {
-    dynamicDependencyInteraction(reactive)
-    reactive.state.base(token)
+
+  override private[rescala] def makeAdmissionPhaseTicket() = new AdmissionTicket[S](this) {
+    override def access[A](reactive: Signal[A, S]) = {
+      dynamicDependencyInteraction(reactive)
+      reactive.state.base(token)
+    }
   }
-  override private[rescala] def dynamicAfter[P](reactive: ReSourciV[P, S]) = {
+  private[rescala] def makeDynamicReevaluationTicket[V, N](b: V): ReevTicket[V, S] = new ReevTicket[V, S](this, b) {
+    override def dynamicAccess(reactive: ReSource[S]) = TwoVersionPropagationImpl.this.dynamicAfter(reactive)
+    override def staticAccess(reactive: ReSource[S]) = reactive.state.get(token)
+  }
+
+  private[rescala] def makeWrapUpPhaseTicket(): WrapUpTicket[S] = new WrapUpTicket[S] {
+    override def access(reactive: ReSource[S]) = TwoVersionPropagationImpl.this.dynamicAfter(reactive)
+  }
+
+  private[rescala] def dynamicAfter[P](reactive: ReSource[S]) = {
     // Note: This only synchronizes reactive to be serializable-synchronized, but not glitch-free synchronized.
     // Dynamic reads thus may return glitched values, which the reevaluation handling implemented in subclasses
     // must account for by repeating glitched reevaluations!
@@ -80,4 +96,5 @@ trait TwoVersionPropagationImpl[S <: TwoVersionStruct] extends TwoVersionPropaga
   def writeState(pulsing: ReSource[S])(value: pulsing.Value): Unit = {
     if (pulsing.state.write(value, token)) this.schedule(pulsing.state)
   }
+
 }

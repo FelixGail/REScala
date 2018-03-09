@@ -6,7 +6,7 @@ import benchmarks.{EngineParam, Step}
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.BenchmarkParams
 import rescala.Engines
-import rescala.core.{Engine, Struct}
+import rescala.core.{Scheduler, Struct}
 import rescala.reactives.Var
 
 @BenchmarkMode(Array(Mode.Throughput))
@@ -18,7 +18,7 @@ import rescala.reactives.Var
 @State(Scope.Benchmark)
 class SingleSwitch[S <: Struct] {
 
-  implicit var engine: Engine[S] = _
+  implicit var engine: Scheduler[S] = _
 
   var source: Var[Int, S] = _
 
@@ -30,7 +30,7 @@ class SingleSwitch[S <: Struct] {
     source = Var(step.get())
     val d1 = Var("true")
     val d2 = Var("false")
-    engine.Signal {
+    engine.Signal.dynamic {
       if (step.test(source())) d1() else d2()
     }
 

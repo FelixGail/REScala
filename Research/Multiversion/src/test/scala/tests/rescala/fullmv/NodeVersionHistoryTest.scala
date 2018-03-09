@@ -1,7 +1,7 @@
 package tests.rescala.fullmv
 
 import org.scalatest.FunSuite
-import rescala.core.{Pulse, ValuePersistency}
+import rescala.core.{Pulse, Initializer}
 import rescala.fullmv.FramingBranchResult.{Deframe, Frame, FramingBranchEnd}
 import rescala.fullmv.NotificationResultAction.NotificationOutAndSuccessorOperation.FollowFraming
 import rescala.fullmv._
@@ -13,19 +13,19 @@ class NodeVersionHistoryTest extends FunSuite {
     val engine = new FullMVEngine(Duration.Zero, "asd")
 
     val createN = engine.newTurn()
-    createN.awaitAndSwitchPhase(TurnPhase.Executing)
-    val n = new NodeVersionHistory[Pulse[Int], FullMVTurn, Int, Int](createN, ValuePersistency.InitializedSignal(Pulse.Value(10)))
-    createN.awaitAndSwitchPhase(TurnPhase.Completed)
+    createN.beginExecuting()
+    val n = new NodeVersionHistory[Pulse[Int], FullMVTurn, Int, Int](createN, Initializer.InitializedSignal(Pulse.Value(10)))
+    createN.completeExecuting()
 
     val reevaluate = engine.newTurn()
-    reevaluate.awaitAndSwitchPhase(TurnPhase.Framing)
+    reevaluate.beginFraming()
     assert(n.incrementFrame(reevaluate) === Frame(Set.empty, reevaluate))
-    reevaluate.awaitAndSwitchPhase(TurnPhase.Executing)
+    reevaluate.completeFraming()
 
     val framing1 = engine.newTurn()
-    framing1.awaitAndSwitchPhase(TurnPhase.Framing)
+    framing1.beginFraming()
     val framing2 = engine.newTurn()
-    framing2.awaitAndSwitchPhase(TurnPhase.Framing)
+    framing2.beginFraming()
     val lock = SerializationGraphTracking.acquireLock(framing1, framing2, UnlockedUnknown)
     framing2.addPredecessor(framing1.selfNode)
     lock.unlock()
@@ -36,6 +36,6 @@ class NodeVersionHistoryTest extends FunSuite {
     n.retrofitSinkFrames(Seq.empty, Some(framing1), -1)
     assert(n.reevOut(reevaluate, Some(Pulse.Value(11))) === FollowFraming(Set.empty, framing2))
 
-    assert(n.incrementSupersedeFrame(framing1, framing2) == Deframe(Set.empty, framing2))
+    assert(n.incrementSupersedeFrame(framing1, framing2) === Deframe(Set.empty, framing2))
   }
 }

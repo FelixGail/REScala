@@ -4,8 +4,8 @@ import java.util.concurrent.{ConcurrentLinkedQueue, CountDownLatch}
 
 import org.scalatest.FunSuite
 import rescala.Engines
-import rescala.reactives.{Signals, Var}
-import rescala.testhelper.Spawn
+import rescala.reactives.Var
+import tests.rescala.testtools.Spawn
 
 import scala.util.Random
 
@@ -24,7 +24,7 @@ class PaperGlitchTest extends FunSuite {
     val price = Var(3)
     val tax = price.map { p => p / 3 }
     val quantity = Var(1)
-    val total = Signals.lift(quantity, price, tax){ (q, p, t) => q * (p + t) }
+    val total = unmanaged.Signal.static{ quantity.value * (price.value + tax.value) }
 
     // ============================================================================================================
 

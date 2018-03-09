@@ -28,18 +28,6 @@ case class LockedSameSCC(lock: Lock) extends SCCState {
 object SerializationGraphTracking /*extends LockContentionTimer*/ {
   val lock: ReentrantLock = new ReentrantLock()
 
-  def acquireLock(defender: FullMVTurn, contender: FullMVTurn, sccState: SCCState): LockedSameSCC = {
-    sccState match {
-      case x@LockedSameSCC(_) =>
-//        entered()
-        x
-      case somethingUnlocked =>
-        lock.lock()
-//        entered()
-        LockedSameSCC(lock)
-    }
-  }
-
   def tryLock(defender: FullMVTurn, contender: FullMVTurn, sccState: SCCState): SCCState = {
     sccState match {
       case x@LockedSameSCC(_) =>

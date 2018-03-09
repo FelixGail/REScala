@@ -33,13 +33,17 @@ object FClockNumericCircle extends SimpleSwingApplication {
 
   val angle = nsTime.map( _.toDouble / NanoSecond * math.Pi)
 
-  val velocityX = Signal {(panel.width() / 2 - 50).toDouble * math.sin(angle()) / NanoSecond}
-  val velocityY = Signal {(panel.height() / 2 - 50).toDouble * math.cos(angle()) / NanoSecond}
+  val velocity = Signal { Pos(
+    x = (panel.width() / 2 - 50).toDouble * math.sin(angle()) / NanoSecond,
+    y = (panel.height() / 2 - 50).toDouble * math.cos(angle()) / NanoSecond
+  )}
 
-  val posX = ticks.dMap(dt => tick => tick.toDouble * dt.before(velocityX)).fold(0d) { (cur, inc) => cur + inc }
-  val posY = ticks.dMap(dt => tick => tick.toDouble * dt.before(velocityY)).fold(0d) { (cur, inc) => cur + inc }
 
-  shapes.transform(new Circle(posX.map(_.toInt), posY.map(_.toInt), Var(50)) :: _)
+  val inc = ticks.map(tick => velocity.value * tick.toDouble)
+
+  val pos = inc.fold(Pos(0,0)) { (cur, inc) => cur + inc }
+
+  shapes.transform(new Circle(pos, Var(50)) :: _)
 
   override lazy val top = {
     panel.preferredSize = new Dimension(400, 300)

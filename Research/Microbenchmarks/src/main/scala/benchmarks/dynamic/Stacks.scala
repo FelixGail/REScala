@@ -6,7 +6,7 @@ import benchmarks.{EngineParam, Size, Step, Workload}
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.{BenchmarkParams, ThreadParams}
 import rescala.Engines
-import rescala.core.{Engine, Struct}
+import rescala.core.{Scheduler, Struct}
 import rescala.reactives._
 
 import scala.collection.immutable.Range
@@ -22,7 +22,7 @@ class StackState[S <: Struct] {
   var sources: Array[Var[Int, S]] = _
   var results: Array[Signal[Int, S]] = _
   var dynamics: Array[Signal[Int, S]] = _
-  var engine: Engine[S] = _
+  var engine: Scheduler[S] = _
   var isManual: Boolean = false
 
   @Setup(Level.Iteration)
@@ -39,7 +39,7 @@ class StackState[S <: Struct] {
     }
 
     dynamics = results.zipWithIndex.map { case (r, i) =>
-      e.Signal {
+      e.Signal.dynamic {
         val v = r()
         val idx = i + (if (step.test(v)) 2 else 1)
         results(idx % threads)()
@@ -62,13 +62,13 @@ class Stacks[S <: Struct] {
       implicit val engine = state.engine
       val index = params.getThreadIndex % params.getThreadCount
       state.sources(index).set(step.run())
-      state.dynamics(index).now
+      state.dynamics(index).readValueOnce
     }
     else {
       implicit val engine = state.engine
       val index = params.getThreadIndex % params.getThreadCount
       state.sources(index).set(step.run())
-      state.dynamics(index).now
+      state.dynamics(index).readValueOnce
     }
   }
 

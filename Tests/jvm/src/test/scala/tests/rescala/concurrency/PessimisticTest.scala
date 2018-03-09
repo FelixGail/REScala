@@ -3,14 +3,14 @@ package tests.rescala.concurrency
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 
 import rescala.Engines
-import rescala.core.Engine
+import rescala.core.Scheduler
+import rescala.core.infiltration.JVMInfiltrator
 import rescala.parrp.{Backoff, ParRP}
-import rescala.testhelper._
-import rescala.twoversion.TwoVersionEngineImpl
-import tests.rescala.RETests
+import tests.rescala.testtools.{RETests, ReevaluationTracker, SetAndExtractTransactionHandle, _}
+import rescala.twoversion.TwoVersionSchedulerImpl
 
 class PessimisticTest extends RETests {
-  engines(Engines.parrp)("SynchronizedReevaluation should synchronize reevaluations"){ (engine: Engine[TestStruct]) =>
+  engines(Engines.parrp)("SynchronizedReevaluation should synchronize reevaluations"){ (engine: Scheduler[TestStruct]) =>
     import engine._
 
     val v1 = Var(false)
@@ -31,9 +31,9 @@ class PessimisticTest extends RETests {
     t1.join(1000)
     assert(autoSync.getCount == 0)
 
-    assert(s1.now === true)
+    assert(s1.readValueOnce === true)
     trackS1.assertClear(true)
-    assert(s2.now === true)
+    assert(s2.readValueOnce === true)
   }
 
   engines(Engines.parrp)("Pessimistic Engines should safely execute concurrently admitted updates to summed signals"){ engine =>
@@ -57,7 +57,7 @@ class PessimisticTest extends RETests {
     assert(latch.getCount == 0)
 
     sumTracker.assert((0 to size).reverse:_*)
-    assert(sum.now === size)
+    assert(sum.readValueOnce === size)
   }
 
   engines(Engines.parrp)("Pessimistic Engines should correctly execute crossed dynamic discoveries"){ engine =>
@@ -103,7 +103,7 @@ class PessimisticTest extends RETests {
     results2.assertClear(4)
   }
 
-  test("ParRP should (not?) Add And Remove Dependency In One Turn") {
+  "ParRP should (not?) Add And Remove Dependency In One Turn" in {
     import Engines.parrp._
 
     // this behavior is not necessary for correctness; adding and removing the edge (i.e. regs and unregs +=1)
@@ -118,7 +118,7 @@ class PessimisticTest extends RETests {
     var regs = 0
     var unregs = 0
 
-    val mockFac = new TwoVersionEngineImpl[ParRP, ParRP]("Reg/Unreg counting ParRP",
+    val mockFac = new TwoVersionSchedulerImpl[ParRP, ParRP]("Reg/Unreg counting ParRP",
       () => new ParRP(new Backoff(), None) {
         override def discover(source: ReSource, sink: Reactive): Unit = {
           if (source eq i0) regs += 1
@@ -130,9 +130,8 @@ class PessimisticTest extends RETests {
         }
       })
 
-    import ParRPTestTooling._
 
-    assert(unsafeNow(i1_3) === 42)
+    assert(JVMInfiltrator.unsafeNow(i1_3) === 42)
     assert(reeval === 1)
     assert(regs === 0)
     assert(unregs === 0)
@@ -140,7 +139,7 @@ class PessimisticTest extends RETests {
     // now, this should create some only in turn dynamic changes
     b0.set(true)(mockFac)
 
-    assert(unsafeNow(i1_3) === 42)
+    assert(JVMInfiltrator.unsafeNow(i1_3) === 42)
     assert(reeval === 3)
     assert(regs === 0)
     assert(unregs === 0)
@@ -148,7 +147,7 @@ class PessimisticTest extends RETests {
     // this does not
     b0.set(false)(mockFac)
 
-    assert(unsafeNow(i1_3) === 42)
+    assert(JVMInfiltrator.unsafeNow(i1_3) === 42)
     assert(reeval === 4)
     assert(regs === 0)
     assert(unregs === 0)
@@ -156,7 +155,7 @@ class PessimisticTest extends RETests {
     // this also does not, because the level of the dynamic signals stays on 3
     b0.set(true)(mockFac)
 
-    assert(unsafeNow(i1_3) === 42)
+    assert(JVMInfiltrator.unsafeNow(i1_3) === 42)
     assert(reeval === 5)
     assert(regs === 0)
     assert(unregs === 0)

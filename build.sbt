@@ -1,10 +1,11 @@
 
 // set the prompt (for this build) to include the project id.
-shellPrompt in ThisBuild := { state => Project.extract(state).currentRef.project + "> " }
+ThisBuild / shellPrompt := { state => Project.extract(state).currentRef.project + "> " }
 // do not spam console with too many errors
 maxErrors := 5
 crossScalaVersions := Seq(cfg.version_211, cfg.version_212)
-(incOptions in ThisBuild) := (incOptions in ThisBuild).value.withLogRecompileOnMacro(false)
+ThisBuild / incOptions := (ThisBuild / incOptions).value.withLogRecompileOnMacro(false)
+cfg.noPublish
 
 lazy val rescalaAggregate = project.in(file(".")).settings(cfg.base).aggregate(
   caseStudyEditor,
@@ -15,7 +16,6 @@ lazy val rescalaAggregate = project.in(file(".")).settings(cfg.base).aggregate(
   caseStudyShapes,
   crdts,
   datastructures,
-  //distributedFullmv,
   dividi,
   documentation,
   examples,
@@ -30,10 +30,10 @@ lazy val rescalaAggregate = project.in(file(".")).settings(cfg.base).aggregate(
   rescalaJVM,
   rescalafx,
   rescalatags,
+  restoreJVM,
+  restoreJS,
   reswing,
   stm,
-  testToolsJS,
-  testToolsJVM,
   testsJS,
   testsJVM,
   todolist,
@@ -45,10 +45,13 @@ lazy val rescala = crossProject.in(file("Main"))
   .settings(
     name := "rescala",
     cfg.base,
-    lib.retypecheck, lib.sourcecode, lib.circe,
-    cfg.strictScalac, cfg.snapshotAssertions,
-    cfg.generateLiftFunctions,
-    cfg.bintray)
+    lib.retypecheck,
+    lib.sourcecode,
+    cfg.strictScalac,
+    cfg.snapshotAssertions,
+    cfg.bintray,
+    lib.reflectionForMacroDefinitions,
+  )
   .jvmSettings()
   .jsSettings(cfg.js)
 //  .nativeSettings(
@@ -61,19 +64,12 @@ lazy val rescalaJS = rescala.js
 
 //lazy val rescalaNative = rescala.native
 
-lazy val testTools = crossProject.in(file("TestTools"))
-  .settings(name := "rescala-testtoolss", cfg.base, cfg.noPublish, cfg.test)
-  .dependsOn(rescala)
-  .jvmSettings().jsSettings(cfg.js)
-lazy val testToolsJVM = testTools.jvm
-lazy val testToolsJS = testTools.js
-
 lazy val tests = crossProject.in(file("Tests"))
   .settings(name := "rescala-tests", cfg.noPublish, cfg.base, cfg.test)
   .dependsOn(rescala)
   .jvmSettings().jsSettings(cfg.js)
-lazy val testsJVM = tests.jvm.dependsOn(testToolsJVM % "test->test", stm)
-lazy val testsJS = tests.js.dependsOn(testToolsJS % "test->test")
+lazy val testsJVM = tests.jvm.dependsOn(stm)
+lazy val testsJS = tests.js
 
 lazy val documentation = project.in(file("Documentation/DocumentationProject"))
   .settings(cfg.base, cfg.noPublish,
@@ -91,6 +87,13 @@ lazy val reactiveStreams = project.in(file("Extensions/ReactiveStreams"))
 lazy val reswing = project.in(file("Extensions/RESwing"))
   .settings(name := "reswing", cfg.base, cfg.bintray, cfg.strictScalac, lib.scalaswing)
   .dependsOn(rescalaJVM)
+
+lazy val restore = crossProject.in(file("Extensions/restoration"))
+  .settings(name := "restoration", cfg.base, cfg.strictScalac, lib.circe, cfg.noPublish)
+  .dependsOn(rescala, tests % "test->test")
+  .jsSettings(cfg.js, lib.jsdom)
+lazy val restoreJVM = restore.jvm
+lazy val restoreJS = restore.js
 
 lazy val rescalatags = project.in(file("Extensions/Rescalatags"))
   .settings(cfg.base, cfg.strictScalac, cfg.bintray, cfg.test,
@@ -159,7 +162,7 @@ lazy val caseStudyMill = project.in(file("Examples/Mill"))
 
 lazy val todolist = project.in(file("Examples/Todolist"))
   .enablePlugins(ScalaJSPlugin)
-  .dependsOn(rescalatags)
+  .dependsOn(rescalatags, restoreJS)
   .settings(cfg.base, cfg.noPublish, name := "todolist", scalaSource in Compile := baseDirectory.value)
 
 lazy val dividi = project.in(file("Examples/dividi"))
@@ -176,39 +179,41 @@ lazy val paroli = project.in(file("Examples/paroli-chat"))
 lazy val fullmv = project.in(file("Research/Multiversion"))
   .settings( cfg.base, name := "rescala-multiversion",
     cfg.test, cfg.noPublish)
-  .dependsOn(rescalaJVM, testToolsJVM % "test->test")
+  .dependsOn(rescalaJVM, testsJVM % "test->test")
 
 //lazy val distributedFullmv = project.in(file("Research/MultiversionDistribution"))
 //  .settings( cfg.base, name := "rescala-distributed-multiversion",
-//    cfg.test, cfg.noPublish, lib.retierTransmitter)
-//  .dependsOn(fullmv, testToolsJVM % "test->test")
-//
-//lazy val meta = project.in(file("Research/Meta"))
-//  .dependsOn(rescalaJVM)
-//  .settings(cfg.base, cfg.test, cfg.noPublish, name := "meta")
+//    cfg.test, cfg.noPublish, lib.circe, lib.retierTransmitter)
+//  .dependsOn(fullmv, testsJVM % "test->test")
+
+lazy val meta = project.in(file("Research/Meta"))
+  .dependsOn(rescalaJVM)
+  .settings(cfg.base, cfg.test, cfg.noPublish, name := "meta")
 
 lazy val microbench = project.in(file("Research/Microbenchmarks"))
   .enablePlugins(JmhPlugin)
   .settings(name := "microbenchmarks", cfg.base, cfg.noPublish, mainClass in Compile := Some("org.openjdk.jmh.Main"),
     TaskKey[Unit]("compileJmh") := Seq(compile in pl.project13.scala.sbt.SbtJmh.JmhKeys.Jmh).dependOn.value)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(stm, fullmv)
+  .dependsOn(stm, fullmv, restoreJVM)
 
 
 // ===================================================================================== Settings
 
 lazy val cfg = new {
 
-  val version_211 = "2.11.11"
+  val version_211 = "2.11.12"
   val version_212 = "2.12.4"
 
 
   val base = List(
     organization := "de.tuda.stg",
-    version := "0.21.0-SNAPSHOT",
+    version := "0.22.0",
     scalaVersion := version_212,
     baseScalac,
-    autoAPIMappings := true // scaladoc
+    // scaladoc
+    autoAPIMappings := true,
+    Compile / doc / scalacOptions += "-groups",
   )
 
   val test = List(
@@ -219,9 +224,12 @@ lazy val cfg = new {
 
 
   /*
+  * publish procedure copied from:
+  *   https://github.com/portable-scala/sbt-crossproject/commit/fbe10fe5cee1f545be75a310612b30e520729a0d#diff-6a3371457528722a734f3c51d9238c13
   * Have your Bintray credentials stored as
     [documented here](http://www.scala-sbt.org/1.0/docs/Publishing.html#Credentials),
     using realm `Bintray API Realm` and host `api.bintray.com`
+  * Use `publish` from sbt
   * Log in to Bintray and publish the files that were sent
   */
   lazy val bintray = Seq(
@@ -231,8 +239,7 @@ lazy val cfg = new {
     scmInfo := Some(
       ScmInfo(
         browseUrl = url("https://github.com/guidosalva/REScala/"),
-        connection =
-          "scm:git:git@github.com:guidosalva/REScala.git"
+        connection = "scm:git:git@github.com:guidosalva/REScala.git"
       )
     ),
     // Publish to Bintray, without the sbt-bintray plugin
@@ -245,7 +252,7 @@ lazy val cfg = new {
       } else {
         val url = new java.net.URL(
           s"https://api.bintray.com/content/stg-tud/maven/$proj/$ver")
-        val patterns = Resolver.ivyStylePatterns
+        val patterns = Resolver.mavenStylePatterns
         Some(Resolver.url("bintray", url)(patterns))
       }
     }
@@ -271,10 +278,10 @@ lazy val cfg = new {
     "-unchecked",
     "-feature",
     "-Xlint",
-    "-Xfuture"
+    "-Xfuture",
   )
 
-  lazy val strictScalac = scalacOptions ++= List(
+  lazy val strictScalac = Compile / compile / scalacOptions ++= List(
     //"-Xlog-implicits" ,
     //"-Yno-predef" ,
     //"-Yno-imports" ,
@@ -289,35 +296,9 @@ lazy val cfg = new {
     //"-Ymacro-debug-lite" ,
   )
 
-  lazy val snapshotAssertions = scalacOptions ++= (if (!version.value.endsWith("-SNAPSHOT")) List("-Xdisable-assertions", "-Xelide-below", "9999999")
-  else Nil)
-
-
-  val generateLiftFunctions = sourceGenerators in Compile += Def.task {
-    val file = (sourceManaged in Compile).value / "rescala" / "reactives" / "GeneratedSignalLift.scala"
-    val definitions = (1 to 22).map { i =>
-      val params = 1 to i map ("n" + _)
-      val types = 1 to i map ("A" + _)
-      val signals = params zip types map { case (p, t) => s"$p: Signal[$t, S]" }
-      def sep(l: Seq[String]) = l.mkString(", ")
-      val getValues = params map (v => s"t.staticDepend($v)")
-      s"""  def lift[${sep(types)}, B, S <: Struct](${sep(signals)})(fun: (${sep(types)}) => B)(implicit maybe: CreationTicket[S]): Signal[B, S] = {
-         |    static(${sep(params)})(t => fun(${sep(getValues)}))
-         |  }
-         |""".stripMargin
-    }
-    IO.write(file,
-      s"""package rescala.reactives
-         |
-         |import rescala.core._
-         |
-         |trait GeneratedSignalLift {
-         |self: Signals.type =>
-         |${definitions.mkString("\n")}
-         |}
-         |""".stripMargin)
-    Seq(file)
-  }.taskValue
+  lazy val snapshotAssertions = scalacOptions ++= (
+    if (!version.value.endsWith("-SNAPSHOT")) List("-Xdisable-assertions", "-Xelide-below", "9999999")
+    else Nil)
 
   val mappingFilters = Seq(
     mappings in (Compile, packageBin) ~= { _.filter(!_._1.getName.endsWith(".conf")) },
@@ -345,7 +326,7 @@ lazy val lib = new {
       "io.circe" %%% "circe-core",
       "io.circe" %%% "circe-generic",
       "io.circe" %%% "circe-parser"
-    ).map(_ % "0.8.0")
+    ).map(_ % "0.9.1")
   }
 
   val reactivestreams = libraryDependencies ++= List(
@@ -368,8 +349,10 @@ lazy val lib = new {
 
   val scalatags = libraryDependencies += "com.lihaoyi" %%% "scalatags" % "0.6.7"
 
+  val jsdom = libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "0.9.4"
+
   val akka = {
-    val akkaVersion = "2.5.8"
+    val akkaVersion = "2.5.9"
     // akka:
     libraryDependencies ++= Seq(
       "com.typesafe.akka" %% "akka-slf4j" % akkaVersion,
@@ -394,10 +377,8 @@ lazy val lib = new {
 
   val jline = libraryDependencies += "org.scala-lang.modules" % "scala-jline" % "2.12.1"
 
-  val retierTransmitter = Seq(
-    libraryDependencies += "de.tuda.stg" %% "retier-communication" % "0.0.1-SNAPSHOT",
-    libraryDependencies += "de.tuda.stg" %% "retier-communicator-tcp" % "0.0.1-SNAPSHOT" % "test",
-    libraryDependencies += "de.tuda.stg" %% "retier-serializer-upickle" % "0.0.1-SNAPSHOT" % "test")
-
+//  val retierTransmitter = Seq(
+//    libraryDependencies += "de.tuda.stg" %% "retier-communication" % "0.0.1-SNAPSHOT",
+//    libraryDependencies += "de.tuda.stg" %% "retier-communicator-tcp" % "0.0.1-SNAPSHOT" % "test",
+//    libraryDependencies += "de.tuda.stg" %% "retier-serializer-upickle" % "0.0.1-SNAPSHOT" % "test")
 }
-

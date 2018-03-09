@@ -1,6 +1,7 @@
 package rescala.levelbased
 
-import rescala.core.{Struct, Turn}
+import rescala.core.Initializer.InitValues
+import rescala.core.Struct
 import rescala.twoversion._
 
 import scala.language.higherKinds
@@ -25,26 +26,19 @@ trait SimpleStruct extends LevelStruct {
   * @tparam S Type of the reactive values that are connected to this struct
   */
 trait LevelStructType[S <: Struct] extends GraphStructType[S] {
-  def level(turn: Turn[S]): Int
-  def updateLevel(i: Int)(turn: Turn[S]): Int
+  def level(): Int
+  def updateLevel(i: Int): Int
 }
 
-/**
-  * Implementation of a struct with graph and buffered pulse storage functionality that also support setting a level.
-  *
-  * @param current         Pulse used as initial value for the struct
-  * @param transient       If a struct is marked as transient, changes to it can not be committed (and are released instead)
-  * @tparam P Pulse stored value type
-  * @tparam S Type of the reactive values that are connected to this struct
-  */
-class LevelStructTypeImpl[P, S <: Struct](current: P, transient: Boolean)
-  extends PropagationStructImpl[P, S](current, transient) with LevelStructType[S] {
+/** Implementation of a struct with graph and buffered pulse storage functionality that also support setting a level. */
+class LevelStructTypeImpl[P, S <: Struct](ip: InitValues[P])
+  extends PropagationStructImpl[P, S](ip) with LevelStructType[S] {
 
   var _level: Int = 0
 
-  override def level(turn: Turn[S]): Int = _level
+  override def level(): Int = _level
 
-  override def updateLevel(i: Int)(turn: Turn[S]): Int = {
+  override def updateLevel(i: Int): Int = {
     val max = math.max(i, _level)
     _level = max
     max

@@ -1,8 +1,9 @@
 package tests.rescala.fullmv
 
 import org.scalatest.FunSuite
+import rescala.core.REName
 import rescala.fullmv.FullMVEngine.default._
-import rescala.testhelper.Spawn
+import tests.rescala.testtools.Spawn
 
 class PipeliningTest extends FunSuite {
   test("pipelining works") {
@@ -14,13 +15,15 @@ class PipeliningTest extends FunSuite {
     val derived: Array[Signal[Int]] = new Array(pipelineLength)
     for(i <- 0 until pipelineLength) {
       val from = if(i == 0) input else derived(i - 1)
-      derived(i) = from.map { v =>
-        Thread.sleep(millisecondsPerNode)
-        v + 1
+      derived(i) = REName.named("pipeline-"+i) { implicit! =>
+        from.map { v =>
+          Thread.sleep(millisecondsPerNode)
+          v + 1
+        }
       }
     }
     var all = Seq.empty[Int]
-    derived(derived.length - 1).observe(all :+= _)
+    derived.last.observe(all :+= _)
 
     val leastPossibleMillisecondsWithoutPipelining = pipelineLength * numberOfUpdates * millisecondsPerNode
 

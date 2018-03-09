@@ -1,74 +1,84 @@
 package rescala.reactives
 
 import rescala.core._
+import rescala.reactives.Events.Estate
 
-abstract class Source[T, S <: Struct](initialState: S#State[Pulse[T], S], name: REName) extends RENamed(name) with ReSourciV[Pulse[T], S] {
-  override type Value = Pulse[T]
-  final override protected[rescala] def state: S#State[Pulse[T], S] = initialState
+abstract class Source[S <: Struct, T](name: REName) extends RENamed(name) with ReSource[S] {
 
   final def admit(value: T)(implicit ticket: AdmissionTicket[S]): Unit = admitPulse(Pulse.Value(value))
-  final def admitPulse(pulse: Pulse[T])(implicit ticket: AdmissionTicket[S]): Unit = {
-    if (ticket.creation.dynamicBefore(this) != pulse)
-      ticket.recordChange(new InitialChange[S] {
-        override val source: Source.this.type = Source.this
-        override def value: Value = pulse
-      })
-  }
+  def admitPulse(pulse: Pulse[T])(implicit ticket: AdmissionTicket[S]): Unit
 }
 
-/**
-  * Source events that can be imperatively updated
+/** Source events with imperative occurrences
   *
   * @param initialState of by the event
   * @tparam T Type returned when the event fires
   * @tparam S Struct type used for the propagation of the event
   */
-final class Evt[T, S <: Struct] private[rescala](initialState: S#State[Pulse[T], S], name: REName) extends Source[T, S](initialState, name) with Event[T, S] {
+final class Evt[T, S <: Struct] private[rescala](initialState: Estate[S, T], name: REName)
+  extends Source[S, T](name) with Event[T, S] {
+  override type Value = Pulse[T]
+  override protected[rescala] def state: State = initialState
+
+  override def internalAccess(v: Pulse[T]): Pulse[T] = v
   /** Trigger the event */
   @deprecated("use .fire instead of apply", "0.21.0")
-  def apply(value: T)(implicit fac: Engine[S]): Unit = fire(value)
-  def fire()(implicit fac: Engine[S], ev: Unit =:= T): Unit = fire(ev(Unit))(fac)
-  def fire(value: T)(implicit fac: Engine[S]): Unit = fac.transaction(this) {admit(value)(_)}
-  override def disconnect()(implicit engine: Engine[S]): Unit = ()
-}
-
-/**
-  * Companion object that allows external users to create new source events.
-  */
-object Evt {
-  def apply[T, S <: Struct]()(implicit ticket: CreationTicket[S]): Evt[T, S] = ticket { t =>
-    t.createSource[Pulse[T], Evt[T, S]](ValuePersistency.Event)(new Evt[T, S](_, ticket.rename))
+  def apply(value: T)(implicit fac: Scheduler[S]): Unit = fire(value)
+  def fire()(implicit fac: Scheduler[S], ev: Unit =:= T): Unit = fire(ev(Unit))(fac)
+  def fire(value: T)(implicit fac: Scheduler[S]): Unit = fac.transaction(this) {admit(value)(_)}
+  override def disconnect()(implicit engine: Scheduler[S]): Unit = ()
+  def admitPulse(pulse: Pulse[T])(implicit ticket: AdmissionTicket[S]): Unit = {
+    ticket.recordChange(new InitialChange[S] {
+      override val source = Evt.this
+      override def writeValue(b: Pulse[T], v: Pulse[T] => Unit): Boolean = {v(pulse); true}
+    })
   }
 }
 
-/**
-  * Source signals that can be imperatively updated
+/** Creates new [[Evt]]s */
+object Evt {
+  def apply[T, S <: Struct]()(implicit ticket: CreationTicket[S]): Evt[T, S] = ticket { t =>
+    t.createSource[Pulse[T], Evt[T, S]](Initializer.Event)(new Evt[T, S](_, ticket.rename))
+  }
+}
+
+/** Source signals with imperatively updates.
   *
   * @param initialState of the signal
   * @tparam A Type stored by the signal
   * @tparam S Struct type used for the propagation of the signal
   */
-final class Var[A, S <: Struct] private[rescala](initialState: S#State[Pulse[A], S], name: REName) extends Source[A, S](initialState, name) with Signal[A, S] {
-  //def update(value: A)(implicit fac: Engine[S]): Unit = set(value)
-  def set(value: A)(implicit fac: Engine[S]): Unit = fac.transaction(this) {admit(value)(_)}
+final class Var[A, S <: Struct] private[rescala](initialState: Signals.Sstate[S, A], name: REName)
+  extends Source[S, A](name) with Signal[A, S] {
+  override type Value = Pulse[A]
 
-  def transform(f: A => A)(implicit fac: Engine[S]): Unit = fac.transaction(this) { t =>
+  override protected[rescala] def state: State = initialState
+
+  //def update(value: A)(implicit fac: Engine[S]): Unit = set(value)
+  def set(value: A)(implicit fac: Scheduler[S]): Unit = fac.transaction(this) {admit(value)(_)}
+
+  def transform(f: A => A)(implicit fac: Scheduler[S]): Unit = fac.transaction(this) { t =>
     admit(f(t.now(this)))(t)
   }
 
-  def setEmpty()(implicit fac: Engine[S]): Unit = fac.transaction(this)(t => admitPulse(Pulse.empty)(t))
+  def setEmpty()(implicit fac: Scheduler[S]): Unit = fac.transaction(this)(t => admitPulse(Pulse.empty)(t))
 
-  override def disconnect()(implicit engine: Engine[S]): Unit = ()
+  override def disconnect()(implicit engine: Scheduler[S]): Unit = ()
+
+  def admitPulse(pulse: Pulse[A])(implicit ticket: AdmissionTicket[S]): Unit = {
+    ticket.recordChange(new InitialChange[S] {
+      override val source: Var.this.type = Var.this
+      override def writeValue(b: Pulse[A], v: Pulse[A] => Unit): Boolean = if (b != pulse) {v(pulse); true} else false
+    })
+  }
 }
 
-/**
-  * Companion object that allows external users to create new source signals.
-  */
+/** Creates new [[Var]]s */
 object Var {
   def apply[T: ReSerializable, S <: Struct](initval: T)(implicit ticket: CreationTicket[S]): Var[T, S] = fromChange(Pulse.Value(initval))
   def empty[T: ReSerializable, S <: Struct]()(implicit ticket: CreationTicket[S]): Var[T, S] = fromChange(Pulse.empty)
-  private[this] def fromChange[T: ReSerializable, S <: Struct](change: Pulse.Change[T])(implicit ticket: CreationTicket[S]): Var[T, S] = ticket { t =>
-    t.createSource[Pulse[T], Var[T, S]](ValuePersistency.InitializedSignal(change))(new Var[T, S](_, ticket.rename))
+  private[this] def fromChange[T: ReSerializable, S <: Struct](change: Pulse[T])(implicit ticket: CreationTicket[S]): Var[T, S] = ticket { t =>
+    t.createSource[Pulse[T], Var[T, S]](Initializer.InitializedSignal(change))(new Var[T, S](_, ticket.rename))
   }
 }
 

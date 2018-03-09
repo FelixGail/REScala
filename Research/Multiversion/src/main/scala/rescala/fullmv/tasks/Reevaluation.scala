@@ -2,9 +2,9 @@ package rescala.fullmv.tasks
 
 import java.util.concurrent.locks.LockSupport
 
-import rescala.core.{Pulse, ReSource, Reactive, ReevaluationResult}
-import rescala.fullmv.NotificationResultAction.{Glitched, ReevOutResult}
+import rescala.core.{ReSource, Reactive, ReevTicket, Result}
 import rescala.fullmv.NotificationResultAction.NotificationOutAndSuccessorOperation.{FollowFraming, NextReevaluation, NoSuccessor}
+import rescala.fullmv.NotificationResultAction.{Glitched, ReevOutResult}
 import rescala.fullmv._
 
 case class Reevaluation(override val turn: FullMVTurn, override val node: Reactive[FullMVStruct]) extends RegularReevaluationHandling {
@@ -16,16 +16,33 @@ trait RegularReevaluationHandling extends ReevaluationHandling[Reactive[FullMVSt
   def doReevaluation(): Unit = {
     assert(Thread.currentThread() == turn.userlandThread, s"$this on different thread ${Thread.currentThread().getName}")
     assert(turn.phase == TurnPhase.Executing, s"$turn cannot reevaluate (requires executing phase")
-    val res: ReevaluationResult[node.Value, FullMVStruct] = try {
-      node.reevaluate(turn, node.state.reevIn(turn), node.state.incomings)
+    val ticket = new ReevTicket[node.Value, FullMVStruct](turn, node.state.reevIn(turn)) {
+      override protected def staticAccess(reactive: ReSource[FullMVStruct]): reactive.Value = turn.staticAfter(reactive)
+      override protected def dynamicAccess(reactive: ReSource[FullMVStruct]): reactive.Value = turn.dynamicAfter(reactive)
+    }
+    val res: Result[node.Value, FullMVStruct] = try {
+      turn.host.withTurn(turn) {
+        node.reevaluate(ticket)
+      }
     } catch {
       case exception: Throwable =>
         System.err.println(s"[FullMV Error] Reevaluation of $node failed with ${exception.getClass.getName}: ${exception.getMessage}; Completing reevaluation as NoChange.")
         exception.printStackTrace()
-        ReevaluationResult.Static[Nothing, FullMVStruct](Pulse.NoChange, node.state.incomings).asInstanceOf[ReevaluationResult[node.Value, FullMVStruct]]
+        ticket.withPropagate(false)
     }
-    res.commitDependencyDiff(turn, node)
-    processReevaluationResult(if(res.valueChanged) Some(res.value) else None)
+    res.getDependencies().foreach(commitDependencyDiff(node, node.state.incomings))
+    var value = Option(node.state.reevIn(turn))
+    res.forValue(v => value = Some(v))
+    res.forEffect(_())
+    processReevaluationResult(if(res.propagate) value else None)
+  }
+
+  final def commitDependencyDiff(node: Reactive[FullMVStruct], current: Set[ReSource[FullMVStruct]])(updated: Set[ReSource[FullMVStruct]]): Unit = {
+    val indepsRemoved = current -- updated
+    val indepsAdded = updated -- current
+    indepsRemoved.foreach(turn.drop(_, node))
+    indepsAdded.foreach(turn.discover(_, node))
+    turn.writeIndeps(node, updated)
   }
 
   override def createReevaluation(succTxn: FullMVTurn) = Reevaluation(succTxn, node)
@@ -37,12 +54,13 @@ case class SourceReevaluation(override val turn: FullMVTurn, override val node: 
 
 trait SourceReevaluationHandling extends ReevaluationHandling[ReSource[FullMVStruct]] {
   def doReevaluation(): Unit = {
-    assert(Thread.currentThread() == turn.userlandThread, s"$this on different thread ${Thread.currentThread().getName}")
+//    assert(Thread.currentThread() == turn.userlandThread, s"$this on different thread ${Thread.currentThread().getName}")
     assert(turn.phase == TurnPhase.Executing, s"$turn cannot source-reevaluate (requires executing phase")
-    val ic = turn.initialChanges(node)
-    assert(ic.source == node, s"$turn initial change map broken?")
-    val res = ic.value.asInstanceOf[node.Value]
-    processReevaluationResult(Some(res))
+    val ic = turn.asInstanceOf[FullMVTurnImpl].initialChanges(node)
+    assert(ic.source eq node, s"$turn initial change map broken?")
+    if(!ic.writeValue(ic.source.state.latestValue, x => processReevaluationResult(Some(x.asInstanceOf[node.Value])))) {
+      processReevaluationResult(None)
+    }
   }
 
   override def createReevaluation(succTxn: FullMVTurn): FullMVAction = SourceReevaluation(succTxn, node)
@@ -62,7 +80,8 @@ trait ReevaluationHandling[N <: ReSource[FullMVStruct]] extends FullMVAction {
     if(FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] Reevaluation($turn,$node) => ${if(changed) "changed" else "unchanged"} $outAndSucc")
     outAndSucc match {
       case Glitched =>
-      // do nothing, reevaluation will be repeated at a later point
+        // do nothing, reevaluation will be repeated at a later point
+        turn.activeBranchDifferential(TurnPhase.Executing, -1)
       case NoSuccessor(out) =>
         for(dep <- out) turn.pushLocalTask(Notification(turn, dep, changed))
       case FollowFraming(out, succTxn) =>

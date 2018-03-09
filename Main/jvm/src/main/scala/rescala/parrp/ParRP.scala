@@ -1,5 +1,6 @@
 package rescala.parrp
 
+import rescala.core.Initializer.InitValues
 import rescala.core._
 import rescala.levelbased.{LevelBasedPropagation, LevelStruct, LevelStructTypeImpl}
 import rescala.locking._
@@ -15,8 +16,8 @@ trait ParRPInterTurn {
 
 }
 
-class ParRPStructType[P, S <: Struct](current: P, transient: Boolean, val lock: TurnLock[ParRPInterTurn])
-  extends LevelStructTypeImpl[P, S](current, transient)
+class ParRPStructType[V, S <: Struct](ip: InitValues[V], val lock: TurnLock[ParRPInterTurn])
+  extends LevelStructTypeImpl[V, S](ip)
 
 
 class ParRP(backoff: Backoff, priorTurn: Option[ParRP]) extends LevelBasedPropagation[ParRP] with ParRPInterTurn with LevelStruct {
@@ -39,11 +40,12 @@ class ParRP(backoff: Backoff, priorTurn: Option[ParRP]) extends LevelBasedPropag
 
   final val key: Key[ParRPInterTurn] = new Key(this)
 
-  override protected def makeDerivedStructState[P](valuePersistency: ValuePersistency[P]): ParRPStructType[P, ParRP] = {
+
+  override protected[this] def makeDerivedStructState[V](ip: InitValues[V]): ParRPStructType[V, ParRP] = {
     val lock = new TurnLock[ParRPInterTurn]
     val owner = lock.tryLock(key)
     assert(owner eq key, s"$this failed to acquire lock on newly created reactive")
-    new ParRPStructType(valuePersistency.initialValue, valuePersistency.isTransient, lock)
+    new ParRPStructType(ip, lock)
   }
 
   /** this is called after the turn has finished propagating, but before handlers are executed */
@@ -57,8 +59,9 @@ class ParRP(backoff: Backoff, priorTurn: Option[ParRP]) extends LevelBasedPropag
     * retry when acquire returns false */
   override def preparationPhase(initialWrites: Traversable[ReSource[TState]]): Unit = {
     val toVisit = new java.util.ArrayDeque[ReSource[TState]](10)
-    initialWrites.foreach(toVisit.offer)
-    val priorKey = priorTurn.map(_.key).orNull
+    val offer: ReSource[TState] => Unit = toVisit.offer
+    initialWrites.foreach(offer)
+    val priorKey = priorTurn.fold[Key[ParRPInterTurn]](null)(_.key)
 
     while (!toVisit.isEmpty) {
       val reactive = toVisit.pop()
@@ -66,12 +69,12 @@ class ParRP(backoff: Backoff, priorTurn: Option[ParRP]) extends LevelBasedPropag
       if ((priorKey ne null) && (owner eq priorKey)) throw new IllegalStateException(s"$this tried to lock reactive $reactive owned by its parent $priorKey")
       if (owner ne key) {
         if (reactive.state.lock.tryLock(key) eq key)
-          reactive.state.outgoing(this).foreach {toVisit.offer}
+          reactive.state.outgoing().foreach {offer}
         else {
           key.reset()
           backoff.backoff()
           toVisit.clear()
-          initialWrites.foreach(toVisit.offer)
+          initialWrites.foreach(offer)
         }
       }
     }
@@ -79,7 +82,7 @@ class ParRP(backoff: Backoff, priorTurn: Option[ParRP]) extends LevelBasedPropag
 
 
   override def forget(reactive: Reactive[TState]): Unit = levelQueue.remove(reactive)
-  override def admit(reactive: Reactive[TState]): Unit = levelQueue.enqueue(reactive.state.level(this))(reactive)
+  override def admit(reactive: Reactive[TState]): Unit = levelQueue.enqueue(reactive.state.level())(reactive)
 
   /** registering a dependency on a node we do not personally own does require some additional care.
     * we let the other turn update the dependency and admit the dependent into the propagation queue
@@ -106,7 +109,7 @@ class ParRP(backoff: Backoff, priorTurn: Option[ParRP]) extends LevelBasedPropag
       owner.turn.drop(source, sink)
       if (source.state.lock.isWriteLock) {
         key.lockKeychain(_.removeFallthrough(owner))
-        if (!sink.state.incoming(this).exists{ inc =>
+        if (!sink.state.incoming().exists{ inc =>
           val lock = inc.state.lock
           lock.isOwner(owner) && lock.isWriteLock
         }) owner.turn.forget(sink)

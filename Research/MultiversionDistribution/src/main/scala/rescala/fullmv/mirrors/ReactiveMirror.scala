@@ -1,20 +1,18 @@
 package rescala.fullmv.mirrors
 
-
 import rescala.core.Reactive
 import rescala.core._
 import rescala.fullmv._
 
-import scala.concurrent.Await
 import scala.concurrent.duration.Duration
 
 object ReactiveMirror {
-  def apply[A](reactive: ReSourciV[A, FullMVStruct], turn: FullMVTurn, reflectionProxy: ReactiveReflectionProxy[A], reflectionIsTransient: Boolean, rename: REName): (Array[(FullMVTurn, A)], Option[FullMVTurn]) = {
+  def apply[A](reactive: ReSource[FullMVStruct], turn: FullMVTurn, reflectionIsTransient: Boolean, rename: REName)(toPulse: reactive.Value => A, reflectionProxy: ReactiveReflectionProxy[A]): (Array[(FullMVTurn, A)], Option[FullMVTurn]) = {
     assert(turn.host == reactive.state.host, s"mirror installation for $reactive on ${reactive.state.host} with $turn from different ${turn.host}")
-    def getValue(turn: FullMVTurn): A = reactive.state.staticAfter(turn)
+    def getValue(turn: FullMVTurn): A = toPulse(reactive.state.staticAfter(turn))
     val mirror = new ReactiveMirror(getValue, reflectionProxy, turn.host.timeout, rename)
 
-    val ownValue = reactive.state.dynamicAfter(turn)
+    val ownValue = toPulse(reactive.state.dynamicAfter(turn))
     val (successorWrittenVersions, maybeFirstFrame) = reactive.state.discover(turn, mirror)
     val mustAddBaseValue = !reflectionIsTransient && (successorWrittenVersions.isEmpty || successorWrittenVersions.head != turn)
     var idx = if(mustAddBaseValue) 1 else 0
@@ -33,52 +31,46 @@ class ReactiveMirror[A](val getValue: FullMVTurn => A, val reflectionProxy: Reac
   override protected[rescala] val state = this
   override val host: FullMVEngine = null
   override def incrementFrame(txn: FullMVTurn): FramingBranchResult[FullMVTurn, Reactive[FullMVStruct]] = {
-    val add = txn.addRemoteBranch(TurnPhase.Framing)
+    FullMVEngine.myAwait(txn.addRemoteBranch(TurnPhase.Framing), timeout)
     reflectionProxy.asyncIncrementFrame(txn)
-    Await.result(add, timeout)
     FramingBranchResult.FramingBranchEnd
   }
   override def decrementFrame(txn: FullMVTurn): FramingBranchResult[FullMVTurn, Reactive[FullMVStruct]] = {
-    val add = txn.addRemoteBranch(TurnPhase.Framing)
+    FullMVEngine.myAwait(txn.addRemoteBranch(TurnPhase.Framing), timeout)
     reflectionProxy.asyncDecrementFrame(txn)
-    Await.result(add, timeout)
     FramingBranchResult.FramingBranchEnd
   }
   override def incrementSupersedeFrame(txn: FullMVTurn, supersede: FullMVTurn): FramingBranchResult[FullMVTurn, Reactive[FullMVStruct]] = {
-    val add = txn.addRemoteBranch(TurnPhase.Framing)
+    FullMVEngine.myAwait(txn.addRemoteBranch(TurnPhase.Framing), timeout)
     reflectionProxy.asyncIncrementSupersedeFrame(txn, supersede)
-    Await.result(add, timeout)
     FramingBranchResult.FramingBranchEnd
   }
   override def decrementReframe(txn: FullMVTurn, reframe: FullMVTurn): FramingBranchResult[FullMVTurn, Reactive[FullMVStruct]] = {
-    val add = txn.addRemoteBranch(TurnPhase.Framing)
+    FullMVEngine.myAwait(txn.addRemoteBranch(TurnPhase.Framing), timeout)
     reflectionProxy.asyncDeframeReframe(txn, reframe)
-    Await.result(add, timeout)
     FramingBranchResult.FramingBranchEnd
   }
   override def notify(txn: FullMVTurn, changed: Boolean): NotificationResultAction[FullMVTurn, Reactive[FullMVStruct]] = {
-    val add = txn.addRemoteBranch(TurnPhase.Executing)
+    FullMVEngine.myAwait(txn.addRemoteBranch(TurnPhase.Executing), timeout)
     if(changed) {
       reflectionProxy.asyncNewValue(txn, getValue(txn))
     } else {
       reflectionProxy.asyncResolvedUnchanged(txn)
     }
-    Await.result(add, timeout)
     NotificationResultAction.GlitchFreeReadyButQueued
   }
   override def notifyFollowFrame(txn: FullMVTurn, changed: Boolean, followFrame: FullMVTurn): NotificationResultAction[FullMVTurn, Reactive[FullMVStruct]] = {
-    val add = txn.addRemoteBranch(TurnPhase.Executing)
+    FullMVEngine.myAwait(txn.addRemoteBranch(TurnPhase.Executing), timeout)
     if(changed) {
       reflectionProxy.asyncNewValueFollowFrame(txn, getValue(txn), followFrame)
     } else {
       reflectionProxy.asyncResolvedUnchangedFollowFrame(txn, followFrame)
     }
-    Await.result(add, timeout)
     NotificationResultAction.GlitchFreeReadyButQueued
   }
   override def latestValue: Value = ???
   override def reevIn(turn: FullMVTurn): Nothing = ???
-  override def reevOut(turn: FullMVTurn, maybeValue: Option[Value]): NotificationResultAction.NotificationOutAndSuccessorOperation[FullMVTurn, Reactive[FullMVStruct]] = ???
+  override def reevOut(turn: FullMVTurn, maybeValue: Option[Value]): NotificationResultAction.ReevOutResult[FullMVTurn, Reactive[FullMVStruct]] = ???
   override def dynamicBefore(txn: FullMVTurn): Nothing = ???
   override def staticBefore(txn: FullMVTurn): Nothing = ???
   override def dynamicAfter(txn: FullMVTurn): Nothing = ???
@@ -87,5 +79,6 @@ class ReactiveMirror[A](val getValue: FullMVTurn => A, val reflectionProxy: Reac
   override def drop(txn: FullMVTurn, remove: Reactive[FullMVStruct]): (Seq[FullMVTurn], Option[FullMVTurn]) = ???
   override def retrofitSinkFrames(successorWrittenVersions: Seq[FullMVTurn], maybeSuccessorFrame: Option[FullMVTurn], arity: Int): Unit = ???
 
-  override protected[rescala] def reevaluate(turn: Turn[FullMVStruct], before: Value, indeps: Set[ReSource[FullMVStruct]]): ReevaluationResult[Value, FullMVStruct] = ???
+
+  override protected[rescala] def reevaluate(input: ReIn) = ???
 }

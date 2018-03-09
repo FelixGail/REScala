@@ -6,8 +6,8 @@ import java.util.concurrent.locks.ReadWriteLock
 import benchmarks.{EngineParam, Step, Workload}
 import org.openjdk.jmh.annotations.{Benchmark, BenchmarkMode, Fork, Measurement, Mode, OutputTimeUnit, Param, Scope, Setup, State, Threads, Warmup}
 import org.openjdk.jmh.infra.BenchmarkParams
-import rescala.core.{Engine, Struct, Turn}
-import rescala.reactives.{Signal, Signals, Var}
+import rescala.core.{Scheduler, Struct}
+import rescala.reactives.{Signal, Var}
 
 @BenchmarkMode(Array(Mode.Throughput))
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
@@ -18,14 +18,13 @@ import rescala.reactives.{Signal, Signals, Var}
 @State(Scope.Thread)
 class StaticVsDynamic[S <: Struct] {
 
-  implicit var engine: Engine[S] = _
+  implicit var engine: Scheduler[S] = _
 
   @Param(Array("true", "false"))
   var static: Boolean = _
 
   var source: Var[Boolean, S] = _
   var current: Boolean = _
-  var illegalTurn: Turn[S] = _
   var lock: ReadWriteLock = _
   var a: Var[Int, S] = _
   var b: Var[Int, S] = _
@@ -40,8 +39,9 @@ class StaticVsDynamic[S <: Struct] {
     a = engine.Var { 10 }
     b = engine.Var { 20 }
 
-    if (static) Signals.lift(source, a, b){(s, a, b) => if (s) a else b}
-    else engine.Signal { if (source()) a() else b() }
+    if (static) engine.Signals.static(source, a, b){st =>
+      if (st.dependStatic(source)) st.dependStatic(a) else st.dependStatic(b)}
+    else engine.Signal.dynamic { if (source()) a() else b() }
 
   }
 
