@@ -84,9 +84,9 @@ trait ReevaluationHandling[N <: ReSource[FullMVStruct]] extends FullMVAction {
       case FollowFraming(out, succTxn) =>
         for(dep <- out) turn.pushLocalTask(NotificationWithFollowFrame(turn, dep, changed, succTxn))
       case NextReevaluation(out, succTxn) =>
-        for(dep <- out) turn.pushLocalTask(NotificationWithFollowFrame(turn, dep, changed, succTxn))
         succTxn.pushExternalTask(createReevaluation(succTxn))
         LockSupport.unpark(succTxn.userlandThread)
+        for(dep <- out) turn.pushLocalTask(NotificationWithFollowFrame(turn, dep, changed, succTxn))
     }
   }
 }

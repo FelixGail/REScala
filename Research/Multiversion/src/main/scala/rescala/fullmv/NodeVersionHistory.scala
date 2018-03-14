@@ -52,7 +52,7 @@ object NotificationResultAction {
   * @tparam InDep the type of incoming dependency nodes
   * @tparam OutDep the type of outgoing dependency nodes
   */
-class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePersistency: InitValues[V]) extends FullMVState[V, T, InDep, OutDep] {
+class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePersistency: InitValues[V]) {
   class Version(val txn: T, @volatile var lastWrittenPredecessorIfStable: Version, var out: Set[OutDep], var pending: Int, var changed: Int, @volatile var value: Option[V]) /*extends MyManagedBlocker*/ {
     // txn >= Executing, stable == true, node reevaluation completed changed
     def isWritten: Boolean = changed == 0 && value.isDefined
@@ -168,6 +168,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
   _versions(0) = new Version(init, lastWrittenPredecessorIfStable = null, out = Set(), pending = 0, changed = 0, Some(valuePersistency.initialValue))
   var size = 1
   var latestValue: V = valuePersistency.initialValue
+  var incomings: Set[InDep] = Set.empty
 
   private def createVersionInHole(position: Int, txn: T) = {
     assert(position > 0, s"must not create version at $position <= 0")
@@ -731,7 +732,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     *
     * @param txn the transaction visiting the node for framing
     */
-  override def incrementFrame(txn: T): FramingBranchResult[T, OutDep] = synchronized {
+  def incrementFrame(txn: T): FramingBranchResult[T, OutDep] = synchronized {
     val result = incrementFrame0(txn, getFramePositionFraming(txn))
     assertOptimizationsIntegrity(s"incrementFrame($txn) -> $result")
     result
@@ -742,7 +743,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * @param txn the transaction visiting the node for framing
     * @param supersede the transaction whose frame was superseded by the visiting transaction at the previous node
     */
-  override def incrementSupersedeFrame(txn: T, supersede: T): FramingBranchResult[T, OutDep] = synchronized {
+  def incrementSupersedeFrame(txn: T, supersede: T): FramingBranchResult[T, OutDep] = synchronized {
     val (position, supersedePos) = getFramePositionsFraming(txn, supersede)
     val version = _versions(position)
     version.pending += 1
@@ -756,13 +757,13 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     result
   }
 
-  override def decrementFrame(txn: T): FramingBranchResult[T, OutDep] = synchronized {
+  def decrementFrame(txn: T): FramingBranchResult[T, OutDep] = synchronized {
     val result = decrementFrame0(txn, getFramePositionFraming(txn))
     assertOptimizationsIntegrity(s"decrementFrame($txn) -> $result")
     result
   }
 
-  override def decrementReframe(txn: T, reframe: T): FramingBranchResult[T, OutDep] = synchronized {
+  def decrementReframe(txn: T, reframe: T): FramingBranchResult[T, OutDep] = synchronized {
     val (position, reframePos) = getFramePositionsFraming(txn, reframe)
     val version = _versions(position)
     version.pending += -1
@@ -850,7 +851,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * @param txn the transaction sending the notification
     * @param changed whether or not the dependency changed
     */
-  override def notify(txn: T, changed: Boolean): NotificationResultAction[T, OutDep] = synchronized {
+  def notify(txn: T, changed: Boolean): NotificationResultAction[T, OutDep] = synchronized {
     val result = notify0(getFramePositionPropagating(txn), txn, changed)
     assertOptimizationsIntegrity(s"notify($txn, $changed) -> $result")
     result
@@ -862,7 +863,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * @param changed whether or not the dependency changed
     * @param followFrame a transaction for which to create a subsequent frame, furthering its partial framing.
     */
-  override def notifyFollowFrame(txn: T, changed: Boolean, followFrame: T): NotificationResultAction[T, OutDep] = synchronized {
+  def notifyFollowFrame(txn: T, changed: Boolean, followFrame: T): NotificationResultAction[T, OutDep] = synchronized {
     val (pos, followPos) = getFramePositionsPropagating(txn, followFrame)
     _versions(followPos).pending += 1
     val result = notify0(pos, txn, changed)
@@ -905,7 +906,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     }
   }
 
-  override def reevIn(turn: T): V = {
+  def reevIn(turn: T): V = {
     assert(synchronized {_versions(firstFrame).txn == turn }, s"$turn called reevIn, but is not first frame owner in $this")
     latestValue
   }
@@ -914,7 +915,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * progress [[firstFrame]] forward until a [[Version.isFrame]] is encountered, and
     * return the resulting notification out (with reframing if subsequent write is found).
     */
-  override def reevOut(turn: T, maybeValue: Option[V]): NotificationResultAction.ReevOutResult[T, OutDep] = synchronized {
+  def reevOut(turn: T, maybeValue: Option[V]): NotificationResultAction.ReevOutResult[T, OutDep] = synchronized {
     maybeValue match {
       case Some(rescala.core.Pulse.Exceptional(t)) => t.printStackTrace()
       case _ => //ignore
@@ -1001,7 +1002,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * @return the corresponding [[Version.value]] from before this transaction, i.e., ignoring the transaction's
     *         own writes.
     */
-  override def dynamicBefore(txn: T): V = {
+  def dynamicBefore(txn: T): V = {
 //    assert(!valuePersistency.isTransient, s"$txn invoked dynamicBefore on transient node")
     val version = synchronized {
       val pos = ensureReadVersion(txn)
@@ -1012,7 +1013,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     version.lastWrittenPredecessorIfStable.value.get
   }
 
-  override def staticBefore(txn: T): V = {
+  def staticBefore(txn: T): V = {
 //    assert(!valuePersistency.isTransient, s"$txn invoked staticBefore on transient struct")
     val version = synchronized {
       val pos = findFinalPosition(txn)
@@ -1031,7 +1032,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * @return the corresponding [[Version.value]] from after this transaction, i.e., awaiting and returning the
     *         transaction's own write if one has occurred or will occur.
     */
-  override def dynamicAfter(txn: T): V = {
+  def dynamicAfter(txn: T): V = {
     val version = synchronized {
       val pos = ensureReadVersion(txn)
       // DO NOT INLINE THIS! it breaks the code! see https://scastie.scala-lang.org/briJDRO3RCmIMEd1zApmBQ
@@ -1045,7 +1046,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     }
   }
 
-  override def staticAfter(txn: T): V = synchronized {
+  def staticAfter(txn: T): V = synchronized {
     val version = synchronized {
       val pos = findFinalPosition(txn)
       _versions(if (pos < 0) -pos - 1 else pos)
@@ -1069,7 +1070,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * @param add the new edge's sink node
     * @return the appropriate [[Version.value]].
     */
-  override def discover(txn: T, add: OutDep): (Seq[T], Option[T]) = synchronized {
+  def discover(txn: T, add: OutDep): (Seq[T], Option[T]) = synchronized {
     val position = ensureReadVersion(txn)
     assert(!_versions(position).out.contains(add), "must not discover an already existing edge!")
     retrofitSourceOuts(position, add, +1)
@@ -1080,7 +1081,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * @param txn the executing reevaluation's transaction
     * @param remove the removed edge's sink node
     */
-  override def drop(txn: T, remove: OutDep): (Seq[T], Option[T]) = synchronized {
+  def drop(txn: T, remove: OutDep): (Seq[T], Option[T]) = synchronized {
     val position = ensureReadVersion(txn)
     assert(_versions(position).out.contains(remove), "must not drop a non-existing edge!")
     retrofitSourceOuts(position, remove, -1)
@@ -1092,7 +1093,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * @param maybeSuccessorFrame maybe a reframing to perform for the first successor frame
     * @param arity +1 for discover adding frames, -1 for drop removing frames.
     */
-  override def retrofitSinkFrames(successorWrittenVersions: Seq[T], maybeSuccessorFrame: Option[T], arity: Int): Unit = synchronized {
+  def retrofitSinkFrames(successorWrittenVersions: Seq[T], maybeSuccessorFrame: Option[T], arity: Int): Unit = synchronized {
     require(math.abs(arity) == 1)
     var minPos = firstFrame
     for(txn <- successorWrittenVersions) {

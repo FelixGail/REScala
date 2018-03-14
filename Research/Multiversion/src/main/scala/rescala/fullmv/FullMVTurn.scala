@@ -12,7 +12,6 @@ import rescala.fullmv.NotificationResultAction.NotificationOutAndSuccessorOperat
 import rescala.fullmv.tasks.{FullMVAction, Notification, Reevaluation}
 
 import scala.annotation.tailrec
-import scala.collection.mutable.ArrayBuffer
 
 class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends Initializer[FullMVStruct] {
   var initialChanges: collection.Map[ReSource[FullMVStruct], InitialChange[FullMVStruct]] = _
@@ -49,9 +48,9 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
   val phaseLock = new ReentrantReadWriteLock()
   @volatile var phase: TurnPhase.Type = TurnPhase.Uninitialized
 
-  val successorsIncludingSelf: ArrayBuffer[FullMVTurn] = ArrayBuffer(this) // this is implicitly a set
+  var successorsIncludingSelf: List[FullMVTurn] = this :: Nil // this is implicitly a set
   @volatile var selfNode = new MutableTransactionSpanningTreeNode[FullMVTurn](this) // this is also implicitly a set
-  @volatile var predecessorSpanningTreeNodes: Map[FullMVTurn, MutableTransactionSpanningTreeNode[FullMVTurn]] = Map(this -> selfNode)
+  @volatile var predecessorSpanningTreeNodes: Map[FullMVTurn, MutableTransactionSpanningTreeNode[FullMVTurn]] = new scala.collection.immutable.Map.Map1(this, selfNode)
 
   //========================================================Local State Control============================================================
 
@@ -73,7 +72,7 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
     assert(newPhase > this.phase, s"$this cannot progress backwards to phase $newPhase.")
     runLocalQueue()
     @inline @tailrec def awaitAndSwitchPhase0(firstUnknownPredecessorIndex: Int, parkAfter: Long, registeredForWaiting: FullMVTurn): Unit = {
-      if (externallyPushedTasks.get != Nil) {
+      if (externallyPushedTasks.get.nonEmpty) {
         if (registeredForWaiting != null) {
           registeredForWaiting.waiters.remove(this.userlandThread)
 //          parkRestart.add(head.asInstanceOf[ReevaluationResultHandling[ReSource[FullMVStruct]]].node.toString)
@@ -92,7 +91,7 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
         // not be in the next phase yet. Only once that's sure we can also thread-safe sure
         // check that no predecessors pushed any tasks into our queue anymore. And only then
         // can we phase switch.
-        if (firstUnknownPredecessorIndex == selfNode.size && externallyPushedTasks.get == Nil) {
+        if (firstUnknownPredecessorIndex == selfNode.size && externallyPushedTasks.get.isEmpty) {
           this.phase = newPhase
           phaseLock.writeLock.unlock()
           val it = waiters.entrySet().iterator()
@@ -237,27 +236,34 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
 
   def maybeNewReachableSubtree(attachBelow: FullMVTurn, spanningSubTreeRoot: TransactionSpanningTreeNode[FullMVTurn]): Unit = {
     if (!isTransitivePredecessor(spanningSubTreeRoot.txn)) {
-      copySubTreeRootAndAssessChildren(attachBelow, spanningSubTreeRoot)
+      predecessorSpanningTreeNodes = copySubTreeRootAndAssessChildren(predecessorSpanningTreeNodes, attachBelow, spanningSubTreeRoot)
     }
   }
 
-  private def copySubTreeRootAndAssessChildren(attachBelow: FullMVTurn, spanningSubTreeRoot: TransactionSpanningTreeNode[FullMVTurn]): Unit = {
+  private def copySubTreeRootAndAssessChildren(bufferPredecessorSpanningTreeNodes: Map[FullMVTurn, MutableTransactionSpanningTreeNode[FullMVTurn]], attachBelow: FullMVTurn, spanningSubTreeRoot: TransactionSpanningTreeNode[FullMVTurn]): Map[FullMVTurn, MutableTransactionSpanningTreeNode[FullMVTurn]] = {
     val newTransitivePredecessor = spanningSubTreeRoot.txn
     // last chance to check if predecessor completed concurrently
     if(newTransitivePredecessor.phase != TurnPhase.Completed) {
       newTransitivePredecessor.newSuccessor(this)
       val copiedSpanningTreeNode = new MutableTransactionSpanningTreeNode(newTransitivePredecessor)
-      predecessorSpanningTreeNodes += newTransitivePredecessor -> copiedSpanningTreeNode
-      predecessorSpanningTreeNodes(attachBelow).addChild(copiedSpanningTreeNode)
+      var updatedBufferPredecessorSpanningTreeNodes = bufferPredecessorSpanningTreeNodes + (newTransitivePredecessor -> copiedSpanningTreeNode)
+      updatedBufferPredecessorSpanningTreeNodes(attachBelow).addChild(copiedSpanningTreeNode)
 
       val it = spanningSubTreeRoot.iterator()
-      while(it.hasNext) {
-        maybeNewReachableSubtree(newTransitivePredecessor, it.next())
+      while (it.hasNext) {
+        val child = it.next()
+        if (!isTransitivePredecessor(child.txn)) {
+          val updated2Buffer = copySubTreeRootAndAssessChildren(updatedBufferPredecessorSpanningTreeNodes, newTransitivePredecessor, child)
+          updatedBufferPredecessorSpanningTreeNodes = updated2Buffer
+        }
       }
+      updatedBufferPredecessorSpanningTreeNodes
+    } else {
+      bufferPredecessorSpanningTreeNodes
     }
   }
 
-  def newSuccessor(successor: FullMVTurn): Unit = successorsIncludingSelf += successor
+  def newSuccessor(successor: FullMVTurn): Unit = successorsIncludingSelf = successor :: successorsIncludingSelf
 
   def asyncReleasePhaseLock(): Unit = phaseLock.readLock().unlock()
 
