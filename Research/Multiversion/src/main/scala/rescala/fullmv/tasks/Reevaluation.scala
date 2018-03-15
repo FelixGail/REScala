@@ -2,7 +2,7 @@ package rescala.fullmv.tasks
 
 import java.util.concurrent.locks.LockSupport
 
-import rescala.core.{ReSource, Reactive, ReevTicket, Result}
+import rescala.core._
 import rescala.fullmv.NotificationResultAction.NotificationOutAndSuccessorOperation.{FollowFraming, NextReevaluation, NoSuccessor}
 import rescala.fullmv.NotificationResultAction.{Glitched, ReevOutResult}
 import rescala.fullmv._
@@ -16,7 +16,8 @@ trait RegularReevaluationHandling extends ReevaluationHandling[Reactive[FullMVSt
   def doReevaluation(): Unit = {
     assert(Thread.currentThread() == turn.userlandThread, s"$this on different thread ${Thread.currentThread().getName}")
     assert(turn.phase == TurnPhase.Executing, s"$turn cannot reevaluate (requires executing phase")
-    val ticket = new ReevTicket[node.Value, FullMVStruct](turn, node.state.reevIn(turn)) {
+    var value = node.state.reevIn(turn)
+    val ticket = new ReevTicket[node.Value, FullMVStruct](turn, value) {
       override protected def staticAccess(reactive: ReSource[FullMVStruct]): reactive.Value = turn.staticAfter(reactive)
       override protected def dynamicAccess(reactive: ReSource[FullMVStruct]): reactive.Value = turn.dynamicAfter(reactive)
     }
@@ -29,10 +30,9 @@ trait RegularReevaluationHandling extends ReevaluationHandling[Reactive[FullMVSt
         ticket.withPropagate(false)
     }
     res.getDependencies().foreach(commitDependencyDiff(node, node.state.incomings))
-    var value = Option(node.state.reevIn(turn))
-    res.forValue(v => value = Some(v))
+    res.forValue(v => value = v)
     res.forEffect(_())
-    processReevaluationResult(if(res.propagate) value else None)
+    processReevaluationResult(if(res.propagate) Some(value) else None)
   }
 
   final def commitDependencyDiff(node: Reactive[FullMVStruct], current: Set[ReSource[FullMVStruct]])(updated: Set[ReSource[FullMVStruct]]): Unit = {
@@ -71,6 +71,16 @@ trait ReevaluationHandling[N <: ReSource[FullMVStruct]] extends FullMVAction {
 
   def processReevaluationResult(maybeChange: Option[node.Value]): Unit = {
     val reevOutResult = node.state.reevOut(turn, maybeChange)
+    if(FullMVEngine.DEBUG && maybeChange.isDefined && maybeChange.get.isInstanceOf[Pulse.Exceptional]){
+      // could be a framework exception that is relevant to debugging, but was eaten by reactive's
+      // exception propagation and thus wouldn't be reported otherwise..
+      if(reevOutResult == Glitched) {
+        println(s"[${Thread.currentThread().getName}] INFO: $this temporarily glitched result is exceptional:")
+      } else {
+        println(s"[${Thread.currentThread().getName}] WARNING: $this glitch-free result is exceptional:")
+      }
+      maybeChange.get.asInstanceOf[Pulse.Exceptional].throwable.printStackTrace()
+    }
     processReevOutResult(reevOutResult, changed = maybeChange.isDefined)
   }
 

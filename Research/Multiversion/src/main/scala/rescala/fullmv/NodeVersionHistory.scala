@@ -4,7 +4,6 @@ import java.util.concurrent.locks.LockSupport
 
 import rescala.core.Initializer.InitValues
 
-import rescala.core.Pulse.Exceptional
 import rescala.fullmv.NodeVersionHistory._
 
 import scala.annotation.elidable.ASSERTION
@@ -916,10 +915,6 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * return the resulting notification out (with reframing if subsequent write is found).
     */
   def reevOut(turn: T, maybeValue: Option[V]): NotificationResultAction.ReevOutResult[T, OutDep] = synchronized {
-    maybeValue match {
-      case Some(rescala.core.Pulse.Exceptional(t)) => t.printStackTrace()
-      case _ => //ignore
-    }
     val position = firstFrame
     val version = _versions(position)
     assert(version.txn == turn, s"$turn called reevDone, but first frame is $version (different transaction)")
@@ -933,10 +928,6 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
       latestReevOut = position
       val stabilizeTo = if (maybeValue.isDefined) {
         latestValue = valuePersistency.unchange.unchange(maybeValue.get)
-        if(FullMVEngine.DEBUG && latestValue.isInstanceOf[Exceptional]){
-          println(s"[${Thread.currentThread().getName}] WARNING: glitch free evaluation result is exceptional:")
-          latestValue.asInstanceOf[Exceptional].throwable.printStackTrace()
-        }
         version.value = maybeValue
         version
       } else {

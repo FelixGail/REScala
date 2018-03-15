@@ -21,21 +21,20 @@ class FullMVEngine(val name: String) extends SchedulerImpl[FullMVStruct, FullMVT
 
   override private[rescala] def singleReadValueOnce[A](reactive: Signal[A]) = reactive.state.latestValue.get
 
-  override private[rescala] def executeTurn[R](declaredWrites: Traversable[ReSource], admissionPhase: (AdmissionTicket) => R): R = {
+  override private[rescala] def executeTurn[R](declaredWrites: Set[ReSource], admissionPhase: (AdmissionTicket) => R): R = {
     val turn = newTurn()
     withTurn(turn) {
-      val setWrites = declaredWrites.toSet // this *should* be part of the interface..
-      if (setWrites.nonEmpty) {
+      if (declaredWrites.nonEmpty) {
         // framing phase
         turn.beginFraming()
-        for (i <- setWrites) turn.pushLocalTask(Framing(turn, i))
+        for (i <- declaredWrites) turn.pushLocalTask(Framing(turn, i))
         turn.completeFraming()
       } else {
         turn.beginExecuting()
       }
 
       // admission phase
-      val admissionTicket = new AdmissionTicket(turn) {
+      val admissionTicket = new AdmissionTicket(turn, declaredWrites) {
         override def access[A](reactive: Signal[A]): reactive.Value = turn.dynamicBefore(reactive)
       }
       val admissionResult = Try { admissionPhase(admissionTicket) }
@@ -45,9 +44,9 @@ class FullMVEngine(val name: String) extends SchedulerImpl[FullMVStruct, FullMVT
       }
 
       // propagation phase
-      if (setWrites.nonEmpty) {
-        turn.initialChanges = admissionTicket.initialChanges.map(ic => ic.source -> ic).toMap
-        for(write <- setWrites) turn.pushLocalTask(SourceNotification(turn, write, admissionResult.isSuccess && turn.initialChanges.contains(write)))
+      if (declaredWrites.nonEmpty) {
+        turn.initialChanges = admissionTicket.initialChanges
+        for(write <- declaredWrites) turn.pushLocalTask(SourceNotification(turn, write, admissionResult.isSuccess && turn.initialChanges.contains(write)))
       }
 
       // turn completion

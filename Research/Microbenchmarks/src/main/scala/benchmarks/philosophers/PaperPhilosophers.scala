@@ -46,16 +46,18 @@ abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Schedul
   case object Ready extends Sight
 
   // Dynamic Sight
-  val sights = for(idx <- 0 until size) yield
-    REName.named(s"sight($idx)") { implicit ! =>
+  val sights = for(avoidStaticOptimization <- 0 until size) yield
+    REName.named(s"sight($avoidStaticOptimization)") { implicit ! =>
       Signal.dynamic[Sight] {
+        val idx = avoidStaticOptimization
         val prevIdx = (idx - 1 + size) % size
         if(dynamicEdgeChanges) {
           forks(prevIdx)() match {
-            case Free => forks(idx)() match {
-              case Taken(neighbor) => Blocked(neighbor)
-              case Free => Ready
-            }
+            case Free =>
+              forks(idx)() match {
+                case Taken(neighbor) => Blocked(neighbor)
+                case Free => Ready
+              }
             case Taken(by) =>
               if (by == idx) {
                 assert(forks(idx)() == Taken(idx), s"sight $idx glitched")
@@ -181,6 +183,7 @@ object PaperPhilosophers {
       println("Running in interactive mode: press <Enter> to terminate.")
       () => System.in.available() <= 0
     } else {
+      println(s"Running for ${duration / 1000} seconds...")
       val end = System.currentTimeMillis() + duration
       () => System.currentTimeMillis() < end
     }
