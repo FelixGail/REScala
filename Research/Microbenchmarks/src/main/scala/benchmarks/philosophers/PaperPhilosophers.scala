@@ -116,56 +116,58 @@ abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Schedul
     retryEating()
   }
 
-  // To be implemented by your choice of topper (see below)
-  val successCount: Signal[Int]
-
-  def total: Int = successCount.readValueOnce
+  def total: Int
 }
 
-trait EventTopper[S <: Struct] {
+trait EventPyramidTopper[S <: Struct] {
   self: PaperPhilosophers[S] =>
   import engine._
 
   val anySuccess = successes.reduce(_ || _)
-  override val successCount: Signal[Int] =
+  val successCount: Signal[Int] =
     REName.named(s"successCount") { implicit ! =>
       anySuccess.fold(0) { (acc, _) => acc + 1 }
     }
+  override def total: Int = successCount.readValueOnce
 }
 
-trait SignalTopper[S <: Struct] {
+trait IndividualCounts[S <: Struct] {
   self: PaperPhilosophers[S] =>
   import engine._
 
   val individualCounts: Seq[Signal[Int]] =
-    for(i <- 0 until size) yield
+    for (i <- 0 until size) yield
       REName.named(s"count($i)") { implicit ! =>
         successes(i).fold(0) { (acc, _) => acc + 1 }
       }
-  override val successCount: Signal[Int] =
+}
+
+trait NoTopper[S <: Struct] extends IndividualCounts[S] {
+  self: PaperPhilosophers[S] =>
+  import engine._
+
+  override def total: Int = individualCounts.map(_.readValueOnce).sum
+}
+
+trait SignalPyramidTopper[S <: Struct] extends IndividualCounts[S] {
+  self: PaperPhilosophers[S] =>
+  import engine._
+
+  val successCount: Signal[Int] =
     individualCounts.reduce{ (a, b) =>
       REName.named(s"sumUpTo($b)") { implicit ! =>
         Signal { a() + b() }
       }
     }
+  override def total: Int = successCount.readValueOnce
 }
 
-trait TransposeTopper[S <: Struct] {
+trait SingleFoldTopper[S <: Struct] {
   self: PaperPhilosophers[S] =>
   import engine._
 
-//  val individualCounts: Seq[Signal[Int]] =
-//    for(i <- 0 until size) yield
-//      REName.named(s"count($i)") { implicit ! =>
-//        successes(i).fold(0) { (acc, _) => acc + 1 }
-//      }
-//  override val successCount: Signal[Int] = Signal {
-//    individualCounts.map(_()).sum
-////    individualCounts.foldLeft(0){ (sum, signal) => sum + signal() }
-//  }
-
-
-  override val successCount: Signal[Int] = Events.fold(successes.toSet[ReSource], 0){(ticket, before) => before() + 1}
+  val successCount: Signal[Int] = Events.fold(successes.toSet[ReSource], 0){(ticket, before) => before() + 1}
+  override def total: Int = successCount.readValueOnce
 }
 
 object PaperPhilosophers {
@@ -175,7 +177,7 @@ object PaperPhilosophers {
     val duration = if(args.length >= 3) Integer.parseInt(args(2)) else 0
 
     implicit val engine = new rescala.fullmv.FullMVEngine(s"PaperPhilosophers($tableSize,$threadCount)")
-    val table = new PaperPhilosophers(tableSize, engine, dynamicEdgeChanges = true) with TransposeTopper[FullMVStruct]
+    val table = new PaperPhilosophers(tableSize, engine, dynamicEdgeChanges = true) with NoTopper[FullMVStruct]
 
 //    println("====================================================================================================")
 

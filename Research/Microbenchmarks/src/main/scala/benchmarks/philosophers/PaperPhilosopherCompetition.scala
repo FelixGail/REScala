@@ -51,9 +51,10 @@ class PaperCompetition[S <: Struct] extends BusyThreads {
       case otherwise => throw new IllegalArgumentException("not a valid dynamicity: " + otherwise)
     }
     table = topper match {
-      case "event" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with EventTopper[S]
-      case "signal" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with SignalTopper[S]
-      case "transpose" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with TransposeTopper[S]
+      case "event" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with EventPyramidTopper[S]
+      case "signal" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with SignalPyramidTopper[S]
+      case "singleFold" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with SingleFoldTopper[S]
+      case "none" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with NoTopper[S]
       case otherwise => throw new IllegalArgumentException("not a valid topper: " + otherwise)
     }
 
