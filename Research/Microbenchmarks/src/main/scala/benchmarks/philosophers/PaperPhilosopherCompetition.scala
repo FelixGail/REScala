@@ -50,12 +50,22 @@ class PaperCompetition[S <: Struct] extends BusyThreads {
       case "semi-static" => false
       case otherwise => throw new IllegalArgumentException("not a valid dynamicity: " + otherwise)
     }
-    table = topper match {
-      case "event" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with EventPyramidTopper[S]
-      case "signal" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with SignalPyramidTopper[S]
-      case "singleFold" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with SingleFoldTopper[S]
-      case "none" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with NoTopper[S]
-      case otherwise => throw new IllegalArgumentException("not a valid topper: " + otherwise)
+    table = if(engineParam.engineName == "unmanaged") {
+      topper match {
+        case "event" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with EventPyramidTopper[S] with ManualLocking[S]
+        case "signal" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with SignalPyramidTopper[S] with ManualLocking[S]
+        case "singleFold" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with SingleFoldTopper[S] with ManualLocking[S]
+        case "none" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with NoTopper[S] with ManualLocking[S]
+        case otherwise => throw new IllegalArgumentException("not a valid topper: " + otherwise)
+      }
+    } else {
+      topper match {
+        case "event" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with EventPyramidTopper[S]
+        case "signal" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with SignalPyramidTopper[S]
+        case "singleFold" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with SingleFoldTopper[S]
+        case "none" => new PaperPhilosophers(philosophers, engineParam.engine, dynamic) with NoTopper[S]
+        case otherwise => throw new IllegalArgumentException("not a valid topper: " + otherwise)
+      }
     }
 
 //    if(engineParam.engineName == "fullmv") {

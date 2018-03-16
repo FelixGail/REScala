@@ -1,9 +1,11 @@
 package benchmarks.philosophers
 
+import java.util.concurrent.locks.ReentrantLock
 import java.util.concurrent.{Executors, ThreadLocalRandom}
 
-import rescala.core.{Scheduler, REName, Struct}
+import rescala.core.{REName, Scheduler, Struct}
 import rescala.fullmv.FullMVStruct
+import rescala.levelbased.{LevelBasedPropagationEngines, SimpleStruct}
 import rescala.parrp.Backoff
 
 import scala.annotation.tailrec
@@ -88,6 +90,8 @@ abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Schedul
   val successes = for(i <- 0 until size) yield
     sightChngs(i).filter(_ == Done)
 
+  def manuallyLocked[T](idx: Int)(f: => T): T = synchronized { f }
+
   def maybeEat(idx: Int): Unit = {
     transaction(phils(idx)) { implicit t =>
       if(t.now(sights(idx)) == Ready) phils(idx).admit(Eating)
@@ -146,6 +150,23 @@ trait NoTopper[S <: Struct] extends IndividualCounts[S] {
   self: PaperPhilosophers[S] =>
   import engine._
 
+  val locks = Array.fill(size) {new ReentrantLock()}
+  override def manuallyLocked[T](idx: Int)(f: => T): T = {
+    val (lock1, lock2, lock3) = if(idx == 0) {
+      (locks(0), locks(1), locks(size - 1))
+    } else if (idx == size - 1) {
+      (locks(0), locks(size - 2), locks(size - 1))
+    } else {
+      (locks(idx - 1), locks(idx), locks(idx + 1))
+    }
+    lock1.lock(); lock2.lock(); lock3.lock()
+    try {
+      f
+    } finally {
+      lock1.unlock(); lock2.unlock(); lock3.unlock()
+    }
+  }
+
   override def total: Int = individualCounts.map(_.readValueOnce).sum
 }
 
@@ -170,14 +191,30 @@ trait SingleFoldTopper[S <: Struct] {
   override def total: Int = successCount.readValueOnce
 }
 
+trait ManualLocking[S <: Struct] extends PaperPhilosophers[S] {
+  override def maybeEat(idx: Int): Unit = {
+    manuallyLocked(idx) {
+      super.maybeEat(idx)
+    }
+  }
+
+  override def rest(idx: Int): Unit = {
+    manuallyLocked(idx) {
+      super.rest(idx)
+    }
+  }
+}
+
 object PaperPhilosophers {
   def main(args: Array[String]): Unit = {
     val tableSize = if(args.length >= 1) Integer.parseInt(args(0)) else 5
     val threadCount = if(args.length >= 2) Integer.parseInt(args(1)) else tableSize
     val duration = if(args.length >= 3) Integer.parseInt(args(2)) else 0
 
-    implicit val engine = new rescala.fullmv.FullMVEngine(s"PaperPhilosophers($tableSize,$threadCount)")
-    val table = new PaperPhilosophers(tableSize, engine, dynamicEdgeChanges = true) with NoTopper[FullMVStruct]
+//    implicit val engine = new rescala.fullmv.FullMVEngine(s"PaperPhilosophers($tableSize,$threadCount)")
+//    val table = new PaperPhilosophers(tableSize, engine, dynamicEdgeChanges = true) with NoTopper[FullMVStruct]
+    implicit val engine = LevelBasedPropagationEngines.unmanaged
+    val table = new PaperPhilosophers(tableSize, engine, dynamicEdgeChanges = true) with NoTopper[SimpleStruct] with ManualLocking[SimpleStruct]
 
 //    println("====================================================================================================")
 
