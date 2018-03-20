@@ -47,10 +47,10 @@ class SimplePhil[S <: Struct] {
   @Benchmark
   def build(): (Var[Philosopher, S], Signal[Vision, S]) = buildPhil()
 
-  @Benchmark
-  def buildAndPropagate(step: Step): Unit = {
-    val (p, v) = buildPhil()
-    p.set(Eating)
-    p.set(Thinking)
-  }
+//  @Benchmark
+//  def buildAndPropagate(step: Step): Unit = {
+//    val (p, v) = buildPhil()
+//    p.set(Eating)
+//    p.set(Thinking)
+//  }
 }
