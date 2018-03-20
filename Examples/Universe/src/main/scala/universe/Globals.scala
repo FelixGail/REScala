@@ -9,7 +9,7 @@ object Globals {
   val engineName = System.getProperty("engineName", "parrp")
 
   implicit val engine: Scheduler[Struct] = engineName match {
-    case "fullmv" => new rescala.fullmv.FullMVEngine(scala.concurrent.duration.Duration.Zero, "fullmv-universe").asInstanceOf[Scheduler[Struct]]
+    case "fullmv" => new rescala.fullmv.FullMVEngine("fullmv-universe").asInstanceOf[Scheduler[Struct]]
     case "stm" => rescala.stm.STMEngine.stm.asInstanceOf[Scheduler[Struct]]
     case _ =>  Engines.byName[Struct](engineName)
   }
