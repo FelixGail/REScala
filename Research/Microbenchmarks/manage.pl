@@ -20,30 +20,31 @@ if ($OSNAME eq "MSWin32") {
 }
 my $OUTDIR = 'out';
 my $RESULTDIR = 'results';
-my $SCHEDULER_TIME = "0:55:00";
+my $SCHEDULER_TIME = "0:30:00";
 my $SCHEDULER_REQUIRE = "avx\\&mpi";
 my $SCHEDULER_CORES = "16";
 
-# my @ENGINES = qw<parrp stm synchron locksweep>;
-my @ENGINES = qw<synchron>;
-# my @ENGINES_UNMANAGED = (@ENGINES, "unmanaged");
-my @ENGINES_UNMANAGED = (@ENGINES);
+my @ENGINES = qw<parrp stm synchron fullmv>;
+# my @ENGINES = qw<synchron>;
+my @ENGINES_UNMANAGED = (@ENGINES, "unmanaged");
+# my @ENGINES_UNMANAGED = (@ENGINES);
 my @ENGINES_SNAPSHOTS = ("synchron", "restoring");
-my @THREADS = (1);
+# my @THREADS = (1);
+my @THREADS = (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16);
 my @REDUCED_THREADS = (8);
 my @STEPS = (1,8,16,24,32,64);
 my @SIZES = (100);
-my @CHATSERVERSIZES = (1,2,4,8,16,32);
+my @CHATSERVERSIZES = (4,8,16,32);
 my @PHILOSOPHERS = (16, 32, 64, 128);
 my @SNAPSHOT_FOLDPERCENT = map {$_ / 10} (0..10);
 my @LAYOUTS = qw<alternating>;
 my %BASECONFIG = (
   # global locking does not deal well with sync iterations
   si => "false", # synchronize iterations
-  wi => 5, # warmup iterations
+  wi => 25, # warmup iterations
   w => "1000ms", # warmup time
   f => 5, # forks
-  i => 5, # iterations
+  i => 35, # iterations
   r => "1000ms", # time per iteration
   to => "10s", #timeout
 );
@@ -60,8 +61,8 @@ my $GITREF = qx[git show -s --format=%H HEAD];
 chomp $GITREF;
 
 my $command = shift @ARGV;
-# my @RUN = @ARGV ? @ARGV : qw<philosophers halfDynamicPhilosophers simplePhil expensiveConflict singleDynamic singleVar turnCreation simpleFan simpleReverseFan simpleNaturalGraph multiReverseFan stmbank chatServer simpleChain dynamicStacks noconflictPhilosophers>;
-my @RUN = @ARGV ? @ARGV : qw<snapshotOverhead snapshotRestoringVsInitial snapshotRestoringVsRecomputation errorPropagationVsMonadic simpleNaturalGraph>;
+my @RUN = @ARGV ? @ARGV : qw<philosophers halfDynamicPhilosophers simplePhil singleDynamic singleVarWrite singleVarRead turnCreation simpleFan simpleReverseFan simpleNaturalGraph multiReverseFan stmbank chatServer chainSignal chainEvent dynamicStacks noconflictPhilosophers halfDynamicNoconflictPhilosophers>;
+# my @RUN = @ARGV ? @ARGV : qw<snapshotOverhead snapshotRestoringVsInitial snapshotRestoringVsRecomputation errorPropagationVsMonadic simpleNaturalGraph>;
 say "selected: " . (join " ", sort @RUN);
 say "available: " . (join " ", sort keys %{&selection()});
 
@@ -82,7 +83,8 @@ sub init {
   chdir "../..";
 
   system('./sbt', 'set scalacOptions in ThisBuild ++= List("-Xdisable-assertions", "-Xelide-below", "9999999")',
-    'project microbench', 'jmh:compile', 'jmh:stage');
+    'project microbench', 'jmh:compile', 'jmh:stage',
+    'project universe', 'stage');
   chdir $MAINDIR;
 }
 
@@ -174,7 +176,7 @@ sub selection {
                 },
                 t => $threads, #threads
               ),
-              "philosophers"
+              "philosophers.PhilosopherCompetition"
             );
             push @runs, {name => $name, program => $program};
           }
@@ -194,14 +196,14 @@ sub selection {
             my $program = makeRunString( $name,
               fromBaseConfig(
                 p => { # parameters
-                  tableType => 'static,other',
+                  tableType => 'static',
                   engineName => (join ',', @ENGINES_UNMANAGED),
                   philosophers => $phils,
                   layout => $layout,
                 },
                 t => $threads, #threads
               ),
-              "philosophers"
+              "philosophers.PhilosopherCompetition"
             );
             push @runs, {name => $name, program => $program};
           }
@@ -211,6 +213,32 @@ sub selection {
       @runs;
     },
 
+    halfDynamicNoconflictPhilosophers => sub {
+      my @runs;
+
+      for my $threads (@THREADS) {
+        for my $layout ("noconflict") {
+          for my $phils ($PHILOSOPHERS[-1]) {
+            my $name = "halfDynamicPhilosophers-threads-$threads-layout-$layout-philosophers-$phils";
+            my $program = makeRunString( $name,
+              fromBaseConfig(
+                p => { # parameters
+                  tableType => 'other',
+                  engineName => (join ',', @ENGINES_UNMANAGED),
+                  philosophers => $phils,
+                  layout => $layout,
+                },
+                t => $threads, #threads
+              ),
+              "philosophers.PhilosopherCompetition"
+            );
+            push @runs, {name => $name, program => $program};
+          }
+        }
+      }
+
+      @runs;
+    },
 
     dynamicPhilosophers => sub {
       my @runs;
@@ -230,7 +258,7 @@ sub selection {
                 },
                 t => $threads, #threads
               ),
-              "philosophers"
+              "philosophers.PhilosopherCompetition"
             );
             push @runs, {name => $name, program => $program};
           }
@@ -257,7 +285,7 @@ sub selection {
                 },
                 t => $threads, #threads
               ),
-              "philosophers"
+              "philosophers.PhilosopherCompetition"
             );
             push @runs, {name => $name, program => $program};
           }
@@ -396,11 +424,11 @@ sub selection {
       @runs;
     },
 
-    singleVar => sub {
+    singleVarWrite => sub {
       my @runs;
 
       for my $threads (@REDUCED_THREADS) {
-          my $name = "singleVar-threads-$threads";
+          my $name = "singleVarWrite-threads-$threads";
           my $program = makeRunString( $name,
             fromBaseConfig(
               p => { # parameters
@@ -408,7 +436,27 @@ sub selection {
               },
               t => $threads,
             ),
-            "simple.SingleVar"
+            "basic.SingleVar.write"
+          );
+          push @runs, {name => $name, program => $program};
+      }
+
+      @runs;
+    },
+
+    singleVarRead => sub {
+      my @runs;
+
+      for my $threads (@REDUCED_THREADS) {
+          my $name = "singleVarRead-threads-$threads";
+          my $program = makeRunString( $name,
+            fromBaseConfig(
+              p => { # parameters
+                engineName => (join ',', @ENGINES_UNMANAGED),
+              },
+              t => $threads,
+            ),
+            "basic.SingleVar.read"
           );
           push @runs, {name => $name, program => $program};
       }
@@ -428,7 +476,7 @@ sub selection {
               },
               t => $threads,
             ),
-            "simple.TurnCreation"
+            "basic.TurnCreation"
           );
           push @runs, {name => $name, program => $program};
       }
@@ -459,7 +507,7 @@ sub selection {
     simplePhil => sub {
       my @runs;
 
-      for my $threads (@THREADS) {
+      for my $threads (@REDUCED_THREADS) {
           my $name = "simplePhil-threads-$threads";
           my $program = makeRunString( $name,
             fromBaseConfig(
@@ -468,7 +516,7 @@ sub selection {
               },
               t => $threads,
             ),
-            "simple.SimplePhil"
+            "simple.SimplePhil.build"
           );
           push @runs, {name => $name, program => $program};
       }
@@ -476,12 +524,12 @@ sub selection {
       @runs;
     },
 
-    simpleChain => sub {
+    chainSignal => sub {
       my @runs;
 
       for my $threads (@REDUCED_THREADS) {
         for my $size (@SIZES) {
-            my $name = "simpleChain-size-$size-threads-$threads";
+            my $name = "chainSignal-size-$size-threads-$threads";
             my $program = makeRunString( $name,
               fromBaseConfig(
                 p => { # parameters
@@ -490,7 +538,7 @@ sub selection {
                 },
                 t => $threads,
               ),
-              "benchmarks.simple.Chain"
+              "benchmarks.simple.ChainSignal.run"
             );
             push @runs, {name => $name, program => $program};
         }
@@ -498,6 +546,29 @@ sub selection {
 
       @runs;
     },
+    chainEvent => sub {
+      my @runs;
+
+      for my $threads (@REDUCED_THREADS) {
+        for my $size (@SIZES) {
+            my $name = "chainEvent-size-$size-threads-$threads";
+            my $program = makeRunString( $name,
+              fromBaseConfig(
+                p => { # parameters
+                  engineName => (join ',', @ENGINES_UNMANAGED),
+                  size => $size,
+                },
+                t => $threads,
+              ),
+              "benchmarks.simple.ChainEvent"
+            );
+            push @runs, {name => $name, program => $program};
+        }
+      }
+
+      @runs;
+    },
+
 
     simpleFan => sub {
       my @runs;
@@ -524,7 +595,7 @@ sub selection {
     simpleReverseFan => sub {
       my @runs;
 
-      for my $threads (@THREADS) {
+      for my $threads (@REDUCED_THREADS) {
           my $name = "simpleReverseFan-threads-$threads";
           my $program = makeRunString( $name,
             fromBaseConfig(
@@ -544,7 +615,7 @@ sub selection {
     simpleNaturalGraph => sub {
       my @runs;
 
-      for my $threads (@THREADS) {
+      for my $threads (@REDUCED_THREADS) {
         my $name = "simpleNaturalGraph-threads-$threads";
         my $program = makeRunString( $name,
           fromBaseConfig(
@@ -586,6 +657,7 @@ sub selection {
       my @runs;
 
       for my $size (16) {
+       for my $rwc (8,16,32,64) {
         for my $run (0,1,2,5,7,10,15,20,25,30,35,40,50,60,70,80,90,100) {
           my $chance = 0.16 * $run;
           my $name = "stmbank-threads-$size-chance-$chance";
@@ -594,15 +666,16 @@ sub selection {
               p => { # parameters
                 engineName => (join ',', @ENGINES_UNMANAGED),
                 numberOfAccounts => 256,
-                readWindowCount => "4,8,16,32,64",
+                readWindowCount => $rwc,
                 globalReadChance => $chance,
               },
               t => $size, #threads
             ),
-            "STMBank.BankAccounts"
+            "STMBank.BankAccounts.reactive"
           );
           push @runs, {name => $name, program => $program};
         }
+       }
       }
 
       @runs;
@@ -613,12 +686,13 @@ sub selection {
       my @runs;
 
       for my $threads (@THREADS) {
-          my $name = "chatServer-threads-$threads";
+        for my $size (@CHATSERVERSIZES) {
+          my $name = "chatServer-threads-$threads-size-$size";
           my $program = makeRunString( $name,
             fromBaseConfig(
               p => { # parameters
                 engineName => (join ',', @ENGINES_UNMANAGED),
-                size => (join ",", @CHATSERVERSIZES),
+                size => $size,
                 work => 0,
               },
               t => $threads,
@@ -626,6 +700,7 @@ sub selection {
             "benchmarks.chatserver.ChatBench"
           );
           push @runs, {name => $name, program => $program};
+        }
       }
 
       @runs;
