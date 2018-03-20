@@ -29,7 +29,7 @@ our $FONTSIZE = "30";
 
 our $NAME_FINE = "Handcrafted";
 our $NAME_COARSE = "No snapshots";
-our $NAME_LOCKSWEEP = "MV-RP";
+our $NAME_FULLMV = "MV-RP";
 our $NAME_PARRP = "ParRP";
 our $NAME_STM = "STM-RP";
 our $NAME_RESTORING = "Snapshots";
@@ -59,7 +59,7 @@ our $MANUAL_BARGRAPH_HACK = 0;
 sub prettyName($name) {
   $name =~ s/Param: engineName:\s*//;
   $name =~ s/pessimistic|spinning|REScalaSpin|parrp/$NAME_PARRP/;
-  $name =~ s/locksweep/$NAME_LOCKSWEEP/;
+  $name =~ s/fullmv/$NAME_FULLMV/;
   $name =~ s/stm|REScalaSTM|STM/$NAME_STM/;
   $name =~ s/synchron|REScalaSynchron/$NAME_COARSE/;
   $name =~ s/unmanaged/$NAME_FINE/;
@@ -73,7 +73,7 @@ sub styleByName($name) {
     when (/$NAME_STM/)       { 'linecolor "blue"       lt 2 lw 2 pt 5  ps 1' }
     when (/$NAME_COARSE|Restore/)    { 'linecolor "blue"       lt 2 lw 2 pt 9  ps 1' }
     when (/fair/)            { 'linecolor "light-blue" lt 2 lw 2 pt 8  ps 1' }
-    when (/$NAME_LOCKSWEEP/) { 'linecolor "dark-green" lt 2 lw 2 pt 7  ps 1' }
+    when (/$NAME_FULLMV/) { 'linecolor "dark-green" lt 2 lw 2 pt 7  ps 1' }
     when (/$NAME_FINE/)      { 'linecolor "black"      lt 2 lw 2 pt 11 ps 1' }
     when (/$NAME_RESTORING|Derive/) { 'linecolor "dark-green" lt 2 lw 2 pt 6  ps 1' }
     default { '' }
@@ -186,9 +186,9 @@ sub miscBenchmarks() {
     for my $threads (8) {
       local $BARGRAPH_LEGEND = "=nolegend";
       compareBargraph($threads, "bargraph", "parallelizable",
-        [qw<synchron locksweep stm unmanaged>],
-        Structures => q[results.Benchmark = "benchmarks.simple.TurnCreation.run"],
-        Read => q[results.Benchmark = "benchmarks.simple.SingleVar.read"],
+        [qw<synchron parrp fullmv stm unmanaged>],
+        Structures => q[results.Benchmark = "benchmarks.basic.TurnCreation.run"],
+        Read => q[results.Benchmark = "benchmarks.basic.SingleVar.read"],
         MultiFan => q[results.Benchmark = "benchmarks.simple.MultiReverseFan.run"],
         Build => q[results.Benchmark like "benchmarks.simple.SimplePhil.build"],
         Philosopher => q[(results.Benchmark = "benchmarks.philosophers.PhilosopherCompetition.eat"
@@ -199,15 +199,15 @@ sub miscBenchmarks() {
         #local $BARGRAPH_YFORMAT = "%1.2f";
         #local $MANUAL_BARGRAPH_HACK = 1;
         compareBargraph($threads, "bargraph", "non-parallelizable",
-          [qw<synchron locksweep stm unmanaged>],
+          [qw<synchron parrp fullmv stm unmanaged>],
           SingleSwitch => q[results.Benchmark = "benchmarks.dynamic.SingleSwitch.run"],
-          SingleWrite => q[results.Benchmark = "benchmarks.simple.SingleVar.write"],
+          SingleWrite => q[results.Benchmark = "benchmarks.basic.SingleVar.write"],
           ReverseFan => q[results.Benchmark = "benchmarks.simple.ReverseFan.run"],
           DynamicStack => q[results.Benchmark = "benchmarks.dynamic.Stacks.run"],
         );
       }
       compareBargraph($threads, "bargraph", "multiplied",
-        [qw<synchron locksweep stm unmanaged>],
+        [qw<synchron parrp fullmv stm unmanaged>],
         Natural => q[results.Benchmark = "benchmarks.simple.NaturalGraph.run"],
         SignalSeq => q[results.Benchmark = "benchmarks.simple.ChainSignal.run"],
         EventSeq => q[results.Benchmark = "benchmarks.simple.ChainEvent.run"],
