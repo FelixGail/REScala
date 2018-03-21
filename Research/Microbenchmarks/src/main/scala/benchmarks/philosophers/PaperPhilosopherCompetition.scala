@@ -23,8 +23,10 @@ class PaperPhilosopherCompetition[S <: Struct] {
 
 @State(Scope.Benchmark)
 class PaperCompetition[S <: Struct] extends BusyThreads {
-  @Param(Array("dynamic","semi-static"))
+  @Param(Array("dynamic","semi-static", "static"))
   var dynamicity: String = _
+  @Param(Array("noconflict", "alternating"))
+  var layout: String = _
   @Param(Array("16", "32"))
   var philosophers: Int = _
   @Param(Array("event", "signal"))
@@ -46,8 +48,9 @@ class PaperCompetition[S <: Struct] extends BusyThreads {
   @Setup(Level.Iteration)
   def setup(params: BenchmarkParams, work: Workload, engineParam: EngineParam[S]) = {
     val dynamic = dynamicity match {
-      case "dynamic" => true
-      case "semi-static" => false
+      case "dynamic" => Dynamicity.Dynamic
+      case "semi-static" => Dynamicity.SemiStatic
+      case "static" => Dynamicity.Static
       case otherwise => throw new IllegalArgumentException("not a valid dynamicity: " + otherwise)
     }
     table = if(engineParam.engineName == "unmanaged") {

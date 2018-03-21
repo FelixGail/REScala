@@ -4,8 +4,6 @@ import java.util.concurrent.locks.ReentrantLock
 import java.util.concurrent.{Executors, ThreadLocalRandom}
 
 import rescala.core.{REName, Scheduler, Struct}
-import rescala.fullmv.FullMVStruct
-import rescala.levelbased.{LevelBasedPropagationEngines, SimpleStruct}
 import rescala.parrp.Backoff
 
 import scala.annotation.tailrec
@@ -13,24 +11,35 @@ import scala.concurrent.{Await, Future, TimeoutException}
 import scala.concurrent.duration._
 import scala.util.{Failure, Success, Try}
 
-abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Scheduler[S], dynamicEdgeChanges: Boolean) {
+sealed trait Dynamicity
+object Dynamicity {
+  case object Static extends Dynamicity
+  case object SemiStatic extends Dynamicity
+  case object Dynamic extends Dynamicity
+}
+abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Scheduler[S], dynamicity: Dynamicity) {
+
   import engine._
 
   sealed trait Philosopher
+
   case object Eating extends Philosopher
+
   case object Thinking extends Philosopher
 
-  val phils = for(idx <- 0 until size) yield
-    REName.named(s"phil($idx)") { implicit! =>
+  val phils = for (idx <- 0 until size) yield
+    REName.named(s"phil($idx)") { implicit ! =>
       Var[Philosopher](Thinking)
     }
 
   sealed trait Fork
+
   case object Free extends Fork
+
   case class Taken(by: Int) extends Fork
 
-  val forks = for(idx <- 0 until size) yield
-    REName.named(s"fork($idx)"){ implicit! =>
+  val forks = for (idx <- 0 until size) yield
+    REName.named(s"fork($idx)") { implicit ! =>
       Signal.dynamic[Fork] {
         val nextIdx = (idx + 1) % size
         (phils(idx)(), phils(nextIdx)()) match {
@@ -43,17 +52,20 @@ abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Schedul
     }
 
   sealed trait Sight
+
   case object Done extends Sight
+
   case class Blocked(by: Int) extends Sight
+
   case object Ready extends Sight
 
   // Dynamic Sight
-  val sights = for(avoidStaticOptimization <- 0 until size) yield
+  val sights = for (avoidStaticOptimization <- 0 until size) yield
     REName.named(s"sight($avoidStaticOptimization)") { implicit ! =>
-      Signal.dynamic[Sight] {
-        val idx = avoidStaticOptimization
-        val prevIdx = (idx - 1 + size) % size
-        if(dynamicEdgeChanges) {
+      dynamicity match {
+        case Dynamicity.Dynamic => Signal.dynamic[Sight] {
+          val idx = avoidStaticOptimization
+          val prevIdx = (idx - 1 + size) % size
           forks(prevIdx)() match {
             case Free =>
               forks(idx)() match {
@@ -68,22 +80,36 @@ abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Schedul
                 Blocked(by)
               }
           }
-        } else {
-          (forks(prevIdx)(), forks(idx)()) match {
-            case (Free, Free) =>
-              Ready
-            case (Taken(left), Taken(right)) if left == idx && right == idx =>
-              Done
-            case (Taken(by), _) =>
-              assert(by != idx, s"sight $idx glitched 1")
-              Blocked(by)
-            case (_, Taken(by)) =>
-              assert(by != idx, s"sight $idx glitched 2")
-              Blocked(by)
-          }
         }
+        case Dynamicity.SemiStatic => Signal.dynamic[Sight] {
+          val idx = avoidStaticOptimization
+          val prevIdx = (idx - 1 + size) % size
+          computeForkStatic(idx, (forks(prevIdx)(), forks(idx)()))
+        }
+        case Dynamicity.Static =>
+          val idx = avoidStaticOptimization
+          val prevIdx = (idx - 1 + size) % size
+          Signal.static[Sight] {
+            computeForkStatic(idx, (forks(prevIdx)(), forks(idx)()))
+          }
       }
+
     }
+
+  private def computeForkStatic(idx: Int, forkStates: (Fork, Fork)) = {
+    forkStates match {
+      case (Free, Free) =>
+        Ready
+      case (Taken(left), Taken(right)) if left == idx && right == idx =>
+        Done
+      case (Taken(by), _) =>
+        assert(by != idx, s"sight $idx glitched 1")
+        Blocked(by)
+      case (_, Taken(by)) =>
+        assert(by != idx, s"sight $idx glitched 2")
+        Blocked(by)
+    }
+  }
 
   val sightChngs: Seq[Event[Sight]] =
     for(i <- 0 until size) yield sights(i).changed
@@ -107,10 +133,14 @@ abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Schedul
   def eatRandomOnce(threadIndex: Int, threadCount: Int): Unit = {
     val seatsServed = size / threadCount + (if (threadIndex < size % threadCount) 1 else 0)
     val seating: Int = threadIndex + ThreadLocalRandom.current().nextInt(seatsServed) * threadCount
+    eatOnce(seating)
+  }
+
+  private def eatOnce(seating: Int) = {
     val bo = new Backoff()
     @tailrec def retryEating(): Unit = {
       maybeEat(seating)
-      if(hasEaten(seating)) {
+      if (hasEaten(seating)) {
         rest(seating)
       } else {
         bo.backoff()
@@ -211,10 +241,10 @@ object PaperPhilosophers {
     val threadCount = if(args.length >= 2) Integer.parseInt(args(1)) else tableSize
     val duration = if(args.length >= 3) Integer.parseInt(args(2)) else 0
 
-//    implicit val engine = new rescala.fullmv.FullMVEngine(s"PaperPhilosophers($tableSize,$threadCount)")
-//    val table = new PaperPhilosophers(tableSize, engine, dynamicEdgeChanges = true) with NoTopper[FullMVStruct]
-    implicit val engine = LevelBasedPropagationEngines.unmanaged
-    val table = new PaperPhilosophers(tableSize, engine, dynamicEdgeChanges = true) with NoTopper[SimpleStruct] with ManualLocking[SimpleStruct]
+    implicit val engine = new rescala.fullmv.FullMVEngine(s"PaperPhilosophers($tableSize,$threadCount)")
+    val table = new PaperPhilosophers(tableSize, engine, Dynamicity.Dynamic) with NoTopper[rescala.fullmv.FullMVStruct]
+//    implicit val engine = rescala.levelbased.LevelBasedPropagationEngines.unmanaged
+//    val table = new PaperPhilosophers(tableSize, engine, Dynamicity.Static) with NoTopper[rescala.levelbased.SimpleStruct] with ManualLocking[rescala.levelbased.SimpleStruct]
 
 //    println("====================================================================================================")
 
