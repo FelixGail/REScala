@@ -24,13 +24,13 @@ my $CSVDIR = 'resultStore';
 my $OUTDIR = 'fig';
 my $BARGRAPH = abs_path("bargraph.pl");
 
-our $FONT = "Latin Modern Roman";
+our $FONT = "Times";
 our $FONTSIZE = "30";
 
 our $NAME_FINE = "Handcrafted";
-our $NAME_COARSE = "No snapshots";
-our $NAME_FULLMV = "MV-RP";
-our $NAME_PARRP = "ParRP";
+our $NAME_COARSE = "G-Lock";
+our $NAME_FULLMV = "FullMV";
+our $NAME_PARRP = "MV-RP";
 our $NAME_STM = "STM-RP";
 our $NAME_RESTORING = "Snapshots";
 
@@ -69,11 +69,11 @@ sub prettyName($name) {
 
 sub styleByName($name) {
   given($name) {
-    when (/$NAME_PARRP/)     { 'linecolor "dark-green" lt 2 lw 2 pt 6  ps 1' }
+    when (/$NAME_PARRP/)     { 'linecolor "dark-green" lt 2 lw 2 pt 7  ps 1' }
     when (/$NAME_STM/)       { 'linecolor "blue"       lt 2 lw 2 pt 5  ps 1' }
-    when (/$NAME_COARSE|Restore/)    { 'linecolor "blue"       lt 2 lw 2 pt 9  ps 1' }
+    when (/$NAME_COARSE|Restore/)    { 'linecolor "red"       lt 2 lw 2 pt 9  ps 1' }
     when (/fair/)            { 'linecolor "light-blue" lt 2 lw 2 pt 8  ps 1' }
-    when (/$NAME_FULLMV/) { 'linecolor "dark-green" lt 2 lw 2 pt 7  ps 1' }
+    when (/$NAME_FULLMV/) { 'linecolor "magenta" lt 2 lw 2 pt 6  ps 1' }
     when (/$NAME_FINE/)      { 'linecolor "black"      lt 2 lw 2 pt 11 ps 1' }
     when (/$NAME_RESTORING|Derive/) { 'linecolor "dark-green" lt 2 lw 2 pt 6  ps 1' }
     default { '' }
@@ -84,17 +84,17 @@ my $DBH = DBI->connect("dbi:SQLite:dbname=". $DBPATH,"","",{AutoCommit => 0,Prin
 {
 
   importCSV();
-  $DBH->do("DELETE FROM $TABLE WHERE Threads > 16");
-  $DBH->do(qq[DELETE FROM $TABLE WHERE "Param: engineName" = "fair"]);
-  $DBH->do(qq[DELETE FROM $TABLE WHERE "Param: engineName" = "parrp"]);
+#  $DBH->do("DELETE FROM $TABLE WHERE Threads > 16");
+#  $DBH->do(qq[DELETE FROM $TABLE WHERE "Param: engineName" = "fair"]);
+#  $DBH->do(qq[DELETE FROM $TABLE WHERE "Param: engineName" = "parrp"]);
 
   remove_tree($_) for glob("$OUTDIR/*");
   mkdir $OUTDIR;
   chdir $OUTDIR;
 
   makeLegend();
-  #miscBenchmarks();
-  restorationBenchmarks();
+  miscBenchmarks();
+#  restorationBenchmarks();
 
   $DBH->commit();
 }
@@ -345,7 +345,19 @@ sub miscBenchmarks() {
   {#universe
     #local $YRANGE = "[5:24] reverse";
     local $YRANGE_ROUND = 10;
+#		say Dumper("before");
+#	  for my $graph (map { {Title => "Param: engineName: $_", "Param: engineName" => $_, Benchmark => "UniverseCaseStudy" } } queryChoices("Param: engineName", Benchmark => "UniverseCaseStudy")) {
+#		my $title = delete $graph->{"Title"};
+#		my @keys = keys %{$graph};
+#		say Dumper(queryDataset(query($X_VARYING, @keys))->(prettyName($title) // "unnamed", values %{$graph}));
+#	  }
     $DBH->do(qq[UPDATE $TABLE SET Score = 60 / Score WHERE Benchmark = "UniverseCaseStudy"]);
+#		say Dumper("after");
+#	  for my $graph (map { {Title => "Param: engineName: $_", "Param: engineName" => $_, Benchmark => "UniverseCaseStudy" } } queryChoices("Param: engineName", Benchmark => "UniverseCaseStudy")) {#
+#		my $title = delete $graph->{"Title"};
+#		my @keys = keys %{$graph};
+#		say Dumper(queryDataset(query($X_VARYING, @keys))->(prettyName($title) // "unnamed", values %{$graph}));
+#	  }
     plotBenchmarksFor("Universe", "Universe",
       (map {{Title => $_, "Param: engineName" => $_ , Benchmark => "UniverseCaseStudy" }}
           queryChoices("Param: engineName", Benchmark => "UniverseCaseStudy")));
@@ -522,7 +534,7 @@ font=$FONT
 yscale=0.6666667
 xscale=1.4
 fontsz=19
-colors=red,green,blue,black
+colors=red,green,magenta,blue,black
 =norotate
 extraops=set ytics $BARGRAPH_YTICS
 $BARGRAPH_LEGEND
@@ -587,6 +599,8 @@ sub importCSV() {
     for my $row (@data) {
       s/(?<=\d),(?=\d)/./g for @$row;  # replace , with . in numbers
     }
+#	say Dumper("INSERT INTO $TABLE (" . (join ",", map {qq["$_"]} @headers) . ") VALUES (" . (join ',', map {'?'} @headers) . ")");
+#	say Dumper(@data);
     my $sth = $DBH->prepare("INSERT INTO $TABLE (" . (join ",", map {qq["$_"]} @headers) . ") VALUES (" . (join ',', map {'?'} @headers) . ")");
     $sth->execute(@$_, $hash) for @data;
   }
