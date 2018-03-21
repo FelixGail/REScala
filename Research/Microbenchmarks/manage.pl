@@ -620,7 +620,7 @@ sub selection {
     simpleReverseFan => sub {
       my @runs;
 
-      for my $threads (@REDUCED_THREADS) {
+      for my $threads (@THREADS) {
           my $name = "simpleReverseFan-threads-$threads";
           my $program = makeRunString( $name,
             fromBaseConfig(
@@ -640,7 +640,7 @@ sub selection {
     simpleNaturalGraph => sub {
       my @runs;
 
-      for my $threads (@REDUCED_THREADS) {
+      for my $threads (@THREADS) {
         my $name = "simpleNaturalGraph-threads-$threads";
         my $program = makeRunString( $name,
           fromBaseConfig(
