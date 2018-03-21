@@ -164,7 +164,7 @@ sub selection {
       for my $threads (@THREADS) {
         for my $dynamicity ("static", "semi-static", "dynamic") {
           for my $phils (@PHILOSOPHERS) {
-            my $name = "paperphils-threads-$threads-dynamicity-$dynamicity";
+            my $name = "paperphils-threads-$threads-dynamicity-$dynamicity-philosophers-$phils";
             my $program = makeRunString( $name,
               fromBaseConfig(
                 p => { # parameters
@@ -822,7 +822,7 @@ sub hhlrjob {
 #SBATCH -o job-%j.out
 #
 # Request the time you need for execution in [hour:]minute
-#SBATCH -t 00:55:00
+#SBATCH -t 00:30:00
 #
 # Required resources
 #SBATCH -C avx&mpi
@@ -843,12 +843,12 @@ echo "--------- java version ----------------------"
 java -version
 echo "---------------------------------------------"
 
-rm -r /tmp/\$(whoami)
-mkdir /tmp/\$(whoami)
+rm -r /tmp/\$(whoami)/\$SLURM_JOB_ID
+mkdir /tmp/\$(whoami)/\$SLURM_JOB_ID
 export LANG=en_US.UTF-8
-export JAVA_OPTS="-Xmx1024m -Xms1024m -Djava.io.tmpdir=/tmp/\$(whoami)"
+export JAVA_OPTS="-Xmx1024m -Xms1024m -Djava.io.tmpdir=/tmp/\$(whoami)/\$SLURM_JOB_ID"
 $programstring
-rm -r /tmp/\$(whoami)
+rm -r /tmp/\$(whoami)/\$SLURM_JOB_ID
 
 ENDPROGRAM
 }
