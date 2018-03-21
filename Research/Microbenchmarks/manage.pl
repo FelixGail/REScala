@@ -170,6 +170,7 @@ sub selection {
                 p => { # parameters
                   dynamicity => $dynamicity,
                   engineName => (join ',', @ENGINES_UNMANAGED),
+                  topper => "none",
                   philosophers => $phils,
                 },
                 t => $threads, #threads
@@ -685,7 +686,7 @@ sub selection {
        for my $rwc (8,16,32,64) {
         for my $run (0,1,2,5,7,10,15,20,25,30,35,40,50,60,70,80,90,100) {
           my $chance = 0.16 * $run;
-          my $name = "stmbank-threads-$size-chance-$chance";
+          my $name = "stmbank-threads-$size-rwc-$rwc-chance-$chance";
           my $program = makeRunString($name,
             fromBaseConfig(
               p => { # parameters
