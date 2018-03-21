@@ -183,7 +183,8 @@ sub miscBenchmarks() {
 
   {
     for my $threads (8) {
-      local $BARGRAPH_LEGEND = "=nolegend";
+      local $BARGRAPH_LEGEND = "=noxlabels
+=nolegend";
       compareBargraph($threads, "bargraph", "parallelizable",
         [qw<synchron parrp fullmv stm unmanaged>],
         Structures => q[results.Benchmark = "benchmarks.basic.TurnCreation.run"],
