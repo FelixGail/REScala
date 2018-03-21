@@ -25,11 +25,9 @@ class PaperPhilosopherCompetition[S <: Struct] {
 class PaperCompetition[S <: Struct] extends BusyThreads {
   @Param(Array("dynamic","semi-static", "static"))
   var dynamicity: String = _
-  @Param(Array("noconflict", "alternating"))
-  var layout: String = _
   @Param(Array("16", "32"))
   var philosophers: Int = _
-  @Param(Array("event", "signal"))
+  @Param(Array("event", "signal", "none", "singleFold"))
   var topper: String = _
   var table: PaperPhilosophers[S] = _
 
