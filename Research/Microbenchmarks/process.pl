@@ -128,9 +128,9 @@ sub miscBenchmarks() {
       #local $LEGEND_POS = "left top" if $philosophers == 48  || $philosophers == 16;
       for my $layout (queryChoices("Param: layout", "Param: tableType" => $dynamic, "Param: philosophers" => $philosophers)) {
         # local $YRANGE = "[0:500]" if $philosophers <= 64 && $dynamic eq "static";
-        local $YRANGE = "[0:400]" if $philosophers <= 32 && $dynamic eq "static";
+        # local $YRANGE = "[0:400]" if $philosophers <= 32 && $dynamic eq "static";
         # local $YRANGE = "[0:800]" if $philosophers > 64 && $dynamic eq "static";
-        local $YRANGE = "[0:300]" if $dynamic ne "static" && $philosophers <= 64;
+        # local $YRANGE = "[0:300]" if $dynamic ne "static" && $philosophers <= 64;
         # local $YRANGE = "[0:200]" if $dynamic ne "static" && $philosophers <= 32;
         # local $YRANGE = "[0:]" if $layout eq "third";
         # local $LEGEND_POS = "left top" if $layout eq "third";
@@ -446,7 +446,7 @@ sub makeLegend() {
   my $chart = Chart::Gnuplot->new(
     output => "legend.pdf",
     terminal => "$GNUPLOT_TERMINAL enhanced font '$FONT,$FONTSIZE'",
-    key => "top left",
+    key => "top left horizontal",
     %MARGINS,
     xrange => "[0:1]",
     yrange => "[0:1]",
