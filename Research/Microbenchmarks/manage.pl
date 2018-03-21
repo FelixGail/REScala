@@ -61,7 +61,7 @@ my $GITREF = qx[git show -s --format=%H HEAD];
 chomp $GITREF;
 
 my $command = shift @ARGV;
-my @RUN = @ARGV ? @ARGV : qw<philosophers halfDynamicPhilosophers simplePhil singleDynamic singleVarWrite singleVarRead turnCreation simpleFan simpleReverseFan simpleNaturalGraph multiReverseFan stmbank chatServer chainSignal chainEvent dynamicStacks noconflictPhilosophers halfDynamicNoconflictPhilosophers>;
+my @RUN = @ARGV ? @ARGV : qw<paperPhilosophers, philosophers halfDynamicPhilosophers simplePhil singleDynamic singleVarWrite singleVarRead turnCreation simpleFan simpleReverseFan simpleNaturalGraph multiReverseFan stmbank chatServer chainSignal chainEvent dynamicStacks noconflictPhilosophers halfDynamicNoconflictPhilosophers>;
 # my @RUN = @ARGV ? @ARGV : qw<snapshotOverhead snapshotRestoringVsInitial snapshotRestoringVsRecomputation errorPropagationVsMonadic simpleNaturalGraph>;
 say "selected: " . (join " ", sort @RUN);
 say "available: " . (join " ", sort keys %{&selection()});
@@ -158,6 +158,31 @@ sub fromBaseConfig {
 
 sub selection {
   return {
+    paperPhilosophers => sub {
+      my @runs;
+
+      for my $threads (@THREADS) {
+        for my $dynamicity ("static", "semi-static", "dynamic") {
+          for my $phils (@PHILOSOPHERS) {
+            my $name = "paperphils-threads-$threads-dynamicity-$dynamicity";
+            my $program = makeRunString( $name,
+              fromBaseConfig(
+                p => { # parameters
+                  dynamicity => $dynamicity,
+                  engineName => (join ',', @ENGINES_UNMANAGED),
+                  philosophers => $phils,
+                },
+                t => $threads, #threads
+              ),
+              "philosophers.PaperPhilosopherCompetition"
+            );
+            push @runs, {name => $name, program => $program};
+          }
+        }
+      }
+
+      @runs;
+    },
 
     philosophers => sub {
       my @runs;
