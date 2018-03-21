@@ -41,17 +41,16 @@ our $BARGRAPH_YFORMAT = "%1.1f";
 our $LEGEND_POS = "off";
 our $YRANGE = "[0:]";
 our $XRANGE = "[:]";
-our $GNUPLOT_TERMINAL = "pdf size 6,3";
+our $GNUPLOT_TERMINAL = "pdf size 5,2.5";
 our %MARGINS = (
-    lmargin => 8.8,
-    rmargin => 1.7,
-    tmargin => 0.4,
+    lmargin => 5.8,
+    rmargin => 1.5,
+    tmargin => 0.3,
     bmargin => 1.5,
   );
 our $VERTICAL_LINE = undef;
 our $X_VARYING = "Threads";
-our $BARGRAPH_LEGEND =
-"legendx=inside";
+our $BARGRAPH_LEGEND = "legendx=inside";
 our %ADDITIONAL_GNUPLOT_PARAMS = ();
 
 our $MANUAL_BARGRAPH_HACK = 0;
@@ -129,7 +128,7 @@ sub miscBenchmarks() {
       #local $LEGEND_POS = "left top" if $philosophers == 48  || $philosophers == 16;
       for my $layout (queryChoices("Param: layout", "Param: tableType" => $dynamic, "Param: philosophers" => $philosophers)) {
         # local $YRANGE = "[0:500]" if $philosophers <= 64 && $dynamic eq "static";
-        # local $YRANGE = "[0:300]" if $philosophers <= 32 && $dynamic eq "static";
+        local $YRANGE = "[0:400]" if $philosophers <= 32 && $dynamic eq "static";
         # local $YRANGE = "[0:800]" if $philosophers > 64 && $dynamic eq "static";
         local $YRANGE = "[0:300]" if $dynamic ne "static" && $philosophers <= 64;
         # local $YRANGE = "[0:200]" if $dynamic ne "static" && $philosophers <= 32;
@@ -345,19 +344,7 @@ sub miscBenchmarks() {
   {#universe
     #local $YRANGE = "[5:24] reverse";
     local $YRANGE_ROUND = 10;
-#		say Dumper("before");
-#	  for my $graph (map { {Title => "Param: engineName: $_", "Param: engineName" => $_, Benchmark => "UniverseCaseStudy" } } queryChoices("Param: engineName", Benchmark => "UniverseCaseStudy")) {
-#		my $title = delete $graph->{"Title"};
-#		my @keys = keys %{$graph};
-#		say Dumper(queryDataset(query($X_VARYING, @keys))->(prettyName($title) // "unnamed", values %{$graph}));
-#	  }
     $DBH->do(qq[UPDATE $TABLE SET Score = 60 / Score WHERE Benchmark = "UniverseCaseStudy"]);
-#		say Dumper("after");
-#	  for my $graph (map { {Title => "Param: engineName: $_", "Param: engineName" => $_, Benchmark => "UniverseCaseStudy" } } queryChoices("Param: engineName", Benchmark => "UniverseCaseStudy")) {#
-#		my $title = delete $graph->{"Title"};
-#		my @keys = keys %{$graph};
-#		say Dumper(queryDataset(query($X_VARYING, @keys))->(prettyName($title) // "unnamed", values %{$graph}));
-#	  }
     plotBenchmarksFor("Universe", "Universe",
       (map {{Title => $_, "Param: engineName" => $_ , Benchmark => "UniverseCaseStudy" }}
           queryChoices("Param: engineName", Benchmark => "UniverseCaseStudy")));
@@ -499,7 +486,7 @@ sub plotDatasets($group, $name, $additionalParams, @datasets) {
     #logscale => "x 2; set logscale y 10",
     #ylabel => "Operations per millisecond",
     # xrange => "reverse",
-    ylabel => "Ops/ms",
+    #ylabel => "Ops/ms",
     %MARGINS,
     %$additionalParams,
     %ADDITIONAL_GNUPLOT_PARAMS
@@ -599,8 +586,6 @@ sub importCSV() {
     for my $row (@data) {
       s/(?<=\d),(?=\d)/./g for @$row;  # replace , with . in numbers
     }
-#	say Dumper("INSERT INTO $TABLE (" . (join ",", map {qq["$_"]} @headers) . ") VALUES (" . (join ',', map {'?'} @headers) . ")");
-#	say Dumper(@data);
     my $sth = $DBH->prepare("INSERT INTO $TABLE (" . (join ",", map {qq["$_"]} @headers) . ") VALUES (" . (join ',', map {'?'} @headers) . ")");
     $sth->execute(@$_, $hash) for @data;
   }
