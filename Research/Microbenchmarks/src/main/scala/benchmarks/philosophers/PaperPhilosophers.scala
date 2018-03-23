@@ -136,7 +136,7 @@ abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Schedul
     eatOnce(seating)
   }
 
-  private def eatOnce(seating: Int) = {
+  def eatOnce(seating: Int) = {
     val bo = new Backoff()
     @tailrec def retryEating(): Unit = {
       maybeEat(seating)
