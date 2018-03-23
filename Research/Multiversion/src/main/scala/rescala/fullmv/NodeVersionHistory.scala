@@ -1037,7 +1037,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     }
   }
 
-  def staticAfter(txn: T): V = synchronized {
+  def staticAfter(txn: T): V = {
     val version = synchronized {
       val pos = findFinalPosition(txn)
       _versions(if (pos < 0) -pos - 1 else pos)
