@@ -61,7 +61,7 @@ my $GITREF = qx[git show -s --format=%H HEAD];
 chomp $GITREF;
 
 my $command = shift @ARGV;
-my @RUN = @ARGV ? @ARGV : qw<paperPhilosophers, philosophers halfDynamicPhilosophers simplePhil singleDynamic singleVarWrite singleVarRead turnCreation simpleFan simpleReverseFan simpleNaturalGraph multiReverseFan stmbank chatServer chainSignal chainEvent dynamicStacks noconflictPhilosophers halfDynamicNoconflictPhilosophers>;
+my @RUN = @ARGV ? @ARGV : qw<paperPhilosophers philosophers halfDynamicPhilosophers simplePhil singleDynamic singleVarWrite singleVarRead turnCreation simpleFan simpleReverseFan simpleNaturalGraph multiReverseFan stmbank chatServer chainSignal chainEvent dynamicStacks noconflictPhilosophers halfDynamicNoconflictPhilosophers>;
 # my @RUN = @ARGV ? @ARGV : qw<snapshotOverhead snapshotRestoringVsInitial snapshotRestoringVsRecomputation errorPropagationVsMonadic simpleNaturalGraph>;
 say "selected: " . (join " ", sort @RUN);
 say "available: " . (join " ", sort keys %{&selection()});
@@ -844,7 +844,7 @@ java -version
 echo "---------------------------------------------"
 
 rm -r /tmp/\$(whoami)/\$SLURM_JOB_ID
-mkdir /tmp/\$(whoami)/\$SLURM_JOB_ID
+mkdir -p /tmp/\$(whoami)/\$SLURM_JOB_ID
 export LANG=en_US.UTF-8
 export JAVA_OPTS="-Xmx1024m -Xms1024m -Djava.io.tmpdir=/tmp/\$(whoami)/\$SLURM_JOB_ID"
 $programstring
