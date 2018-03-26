@@ -29,8 +29,13 @@ abstract class ReevTicket[V, S <: Struct](creation: Initializer[S],
 
   private[rescala] final override def collectDynamic(reactive: ReSource[S]): reactive.Value = {
     assert (collectedDependencies != null, "may not access dynamic dependencies without tracking dependencies")
-    collectedDependencies += reactive
-    dynamicAccess(reactive)
+    val updatedDeps = collectedDependencies + reactive
+    if(updatedDeps eq collectedDependencies) {
+      staticAccess(reactive)
+    } else {
+      collectedDependencies = updatedDeps
+      dynamicAccess(reactive)
+    }
   }
 
   // inline result into ticket, to reduce the amount of garbage during reevaluation
