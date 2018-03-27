@@ -26,16 +26,28 @@ my $SCHEDULER_CORES = "16";
 
 my @ENGINES = qw<stm synchron fullmv>;
 # my @ENGINES = qw<synchron>;
+
 my @ENGINES_UNMANAGED = (@ENGINES, "unmanaged");
 # my @ENGINES_UNMANAGED = (@ENGINES);
+
 my @ENGINES_SNAPSHOTS = ("synchron", "restoring");
-# my @THREADS = (1);
+
 my @THREADS = (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16);
+# my @THREADS = (7);
+
 my @REDUCED_THREADS = (8);
 my @STEPS = (1,8,16,24,32,64);
 my @SIZES = (100);
 my @CHATSERVERSIZES = (4,8,16,32);
+
 my @PHILOSOPHERS = (-4, 16, 32, 64, 128);
+# my @PHILOSOPHERS = (64);
+
+my @BUSYS = ("false");
+
+my @DYNAMICITIES = ("static", "semi-static", "dynamic");
+# my @DYNAMICITIES = ("dynamic");
+
 my @SNAPSHOT_FOLDPERCENT = map {$_ / 10} (0..10);
 my @LAYOUTS = qw<alternating>;
 my %BASECONFIG = (
@@ -161,23 +173,25 @@ sub selection {
     signaltopper => sub {
       my @runs;
 
-      for my $threads (@THREADS) {
-        for my $dynamicity ("static", "semi-static", "dynamic") {
-          my $name = "paperphils-dynamicity-$dynamicity-signaltopper-16";
-          my $program = makeRunString( $name,
-            fromBaseConfig(
-              p => { # parameters
-                dynamicity => $dynamicity,
-                engineName => (join ',', @ENGINES_UNMANAGED),
-                topper => "signal",
-                philosophers => 16,
-                #runBusyThreads => "true",
-              },
-              t => $threads, #threads
-            ),
-            "philosophers.PaperPhilosopherCompetition"
-          );
-          push @runs, {name => $name, program => $program};
+      for my $busy (@BUSYS) {
+        for my $threads (@THREADS) {
+          for my $dynamicity (@DYNAMICITIES) {
+            my $name = "paperphils-busy-$busy-threads-$threads-dynamicity-$dynamicity-signaltopper-16";
+            my $program = makeRunString( $name,
+              fromBaseConfig(
+                p => { # parameters
+                  dynamicity => $dynamicity,
+                  engineName => (join ',', @ENGINES_UNMANAGED),
+                  topper => "signal",
+                  philosophers => 16,
+                  runBusyThreads => $busy,
+                },
+                t => $threads, #threads
+              ),
+              "philosophers.PaperPhilosopherCompetition"
+            );
+            push @runs, {name => $name, program => $program};
+          }
         }
       }
 
@@ -187,24 +201,26 @@ sub selection {
     paperPhilosophers => sub {
       my @runs;
 
-      for my $threads (@THREADS) {
-        for my $dynamicity ("static", "semi-static", "dynamic") {
-          for my $phils (@PHILOSOPHERS) {
-            my $name = "paperphils-threads-$threads-dynamicity-$dynamicity-philosophers-$phils";
-            my $program = makeRunString( $name,
-              fromBaseConfig(
-                p => { # parameters
-                  dynamicity => $dynamicity,
-                  engineName => (join ',', @ENGINES_UNMANAGED),
-                  topper => "none",
-                  philosophers => $phils,
-                  runBusyThreads => "true",
-                },
-                t => $threads, #threads
-              ),
-              "philosophers.PaperPhilosopherCompetition"
-            );
-            push @runs, {name => $name, program => $program};
+      for my $busy (@BUSYS) {
+        for my $threads (@THREADS) {
+          for my $dynamicity (@DYNAMICITIES) {
+            for my $phils (@PHILOSOPHERS) {
+              my $name = "paperphils-busy-$busy-threads-$threads-dynamicity-$dynamicity-philosophers-$phils";
+              my $program = makeRunString( $name,
+                fromBaseConfig(
+                  p => { # parameters
+                    dynamicity => $dynamicity,
+                    engineName => (join ',', @ENGINES_UNMANAGED),
+                    topper => "none",
+                    philosophers => $phils,
+                    runBusyThreads => $busy,
+                  },
+                  t => $threads, #threads
+                ),
+                "philosophers.PaperPhilosopherCompetition"
+              );
+              push @runs, {name => $name, program => $program};
+            }
           }
         }
       }
