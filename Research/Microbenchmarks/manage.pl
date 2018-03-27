@@ -24,7 +24,7 @@ my $SCHEDULER_TIME = "0:30:00";
 my $SCHEDULER_REQUIRE = "avx\\&mpi";
 my $SCHEDULER_CORES = "16";
 
-my @ENGINES = qw<parrp stm synchron fullmv>;
+my @ENGINES = qw<stm synchron fullmv>;
 # my @ENGINES = qw<synchron>;
 my @ENGINES_UNMANAGED = (@ENGINES, "unmanaged");
 # my @ENGINES_UNMANAGED = (@ENGINES);
@@ -35,7 +35,7 @@ my @REDUCED_THREADS = (8);
 my @STEPS = (1,8,16,24,32,64);
 my @SIZES = (100);
 my @CHATSERVERSIZES = (4,8,16,32);
-my @PHILOSOPHERS = (16, 32, 64, 128);
+my @PHILOSOPHERS = (-4, 16, 32, 64, 128);
 my @SNAPSHOT_FOLDPERCENT = map {$_ / 10} (0..10);
 my @LAYOUTS = qw<alternating>;
 my %BASECONFIG = (
@@ -43,7 +43,7 @@ my %BASECONFIG = (
   si => "false", # synchronize iterations
   wi => 25, # warmup iterations
   w => "1000ms", # warmup time
-  f => 5, # forks
+  f => 6, # forks
   i => 35, # iterations
   r => "1000ms", # time per iteration
   to => "10s", #timeout
@@ -61,7 +61,7 @@ my $GITREF = qx[git show -s --format=%H HEAD];
 chomp $GITREF;
 
 my $command = shift @ARGV;
-my @RUN = @ARGV ? @ARGV : qw<paperPhilosophers philosophers halfDynamicPhilosophers simplePhil singleDynamic singleVarWrite singleVarRead turnCreation simpleFan simpleReverseFan simpleNaturalGraph multiReverseFan stmbank chatServer chainSignal chainEvent dynamicStacks noconflictPhilosophers halfDynamicNoconflictPhilosophers>;
+my @RUN = @ARGV ? @ARGV : qw<signaltopper paperPhilosophers simplePhil singleDynamic singleVarWrite singleVarRead turnCreation simpleFan simpleReverseFan simpleNaturalGraph multiReverseFan stmbank chatServer chainSignal chainEvent dynamicStacks>;
 # my @RUN = @ARGV ? @ARGV : qw<snapshotOverhead snapshotRestoringVsInitial snapshotRestoringVsRecomputation errorPropagationVsMonadic simpleNaturalGraph>;
 say "selected: " . (join " ", sort @RUN);
 say "available: " . (join " ", sort keys %{&selection()});
@@ -158,6 +158,32 @@ sub fromBaseConfig {
 
 sub selection {
   return {
+    signaltopper => sub {
+      my @runs;
+
+      for my $threads (@THREADS) {
+        for my $dynamicity ("static", "semi-static", "dynamic") {
+          my $name = "paperphils-dynamicity-$dynamicity-signaltopper-16";
+          my $program = makeRunString( $name,
+            fromBaseConfig(
+              p => { # parameters
+                dynamicity => $dynamicity,
+                engineName => (join ',', @ENGINES_UNMANAGED),
+                topper => "signal",
+                philosophers => 16,
+                #runBusyThreads => "true",
+              },
+              t => $threads, #threads
+            ),
+            "philosophers.PaperPhilosopherCompetition"
+          );
+          push @runs, {name => $name, program => $program};
+        }
+      }
+
+      @runs;
+    },
+
     paperPhilosophers => sub {
       my @runs;
 
@@ -172,6 +198,7 @@ sub selection {
                   engineName => (join ',', @ENGINES_UNMANAGED),
                   topper => "none",
                   philosophers => $phils,
+                  runBusyThreads => "true",
                 },
                 t => $threads, #threads
               ),
