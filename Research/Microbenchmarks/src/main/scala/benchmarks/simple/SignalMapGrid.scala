@@ -25,9 +25,9 @@ class SignalMapGrid[S <: Struct] extends BusyThreads {
   var depth: Int = _
 
   @Setup(Level.Iteration)
-  def setup(params: BenchmarkParams, step: Step, engineParam: EngineParam[S], work: Workload) = {
+  def setup(params: BenchmarkParams, engineParam: EngineParam[S], work: Workload) = {
     engine = engineParam.engine
-    source = Var(step.run())
+    source = Var(0)
     leafs = for (w <- 1 to width) yield {
       var result: Signal[Int, S] = source
       for (d <- 1 to depth) {
