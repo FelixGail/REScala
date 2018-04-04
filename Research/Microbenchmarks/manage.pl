@@ -228,6 +228,44 @@ sub selection {
       @runs;
     },
 
+    asdf => sub {
+      my @runs;
+
+      for my $threads (8,16) {
+        for my $work (0,100,200,400,800,1600,3200) {
+          my $name = "chain-threads-$threads-work-$work";
+          my $program = makeRunString( $name,
+            fromBaseConfig(
+              p => { # parameters
+                work => $work,
+                engineName => (join ',', @ENGINES),
+                size => $threads,
+              },
+              t => $threads, #threads
+            ),
+            "simple.SingleChainSignal"
+          );
+          push @runs, {name => $name, program => $program};
+
+          my $name2 = "fan-threads-$threads-work-$work";
+          my $program2 = makeRunString( $name2,
+            fromBaseConfig(
+              p => { # parameters
+                work => $work,
+                engineName => (join ',', @ENGINES),
+                size => $threads,
+              },
+              t => $threads, #threads
+            ),
+            "simple.Fan"
+          );
+          push @runs, {name => $name2, program => $program2};
+        }
+      }
+
+      @runs;
+    },
+
     philosophers => sub {
       my @runs;
 
