@@ -15,25 +15,32 @@ import rescala.reactives.{Signal, Var}
 @Fork(1)
 @Threads(1)
 @State(Scope.Benchmark)
-class SingleChainSignal[S <: Struct] extends BusyThreads {
+class SignalMapGrid[S <: Struct] extends BusyThreads {
   implicit var engine: Scheduler[S] = _
   var source: Var[Int, S] = _
-  var result: Signal[Int, S] = _
+  var leafs: Seq[Signal[Int, S]] = _
+  @Param(Array("1", "4", "16"))
+  var width: Int = _
+  @Param(Array("1", "4", "16"))
+  var depth: Int = _
 
   @Setup(Level.Iteration)
-  def setup(params: BenchmarkParams, size: Size, step: Step, engineParam: EngineParam[S], work: Workload) = {
+  def setup(params: BenchmarkParams, step: Step, engineParam: EngineParam[S], work: Workload) = {
     engine = engineParam.engine
     source = Var(step.run())
-    result = source
-    for (i <- 1 to size.size) {
-      result = REName.named(s"map-$i") { implicit! =>
-        result.map{v => work.consume(); v + 1}
+    leafs = for (w <- 1 to width) yield {
+      var result: Signal[Int, S] = source
+      for (d <- 1 to depth) {
+        result = REName.named(s"map-$w-$d") { implicit ! =>
+          result.map { v => work.consume(); v + 1 }
+        }
       }
+      result
     }
   }
 
   @Benchmark
-  def run(step: Step): Unit = source.set(step.run())
+  def run(): Unit = source.transform(_ + 1)
 
 //  @TearDown(Level.Trial) def printStats(p: BenchmarkParams): Unit = {
 //    println()
