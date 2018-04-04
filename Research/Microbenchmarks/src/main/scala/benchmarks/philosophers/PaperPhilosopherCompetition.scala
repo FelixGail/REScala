@@ -33,8 +33,9 @@ class PaperCompetition[S <: Struct] extends BusyThreads {
     * philosophers > 0 mean that the table has this many philosophers, and they are distributed to threads round robin, each thread picks one assigned philosophers for each iteration.
     * philosophers = 0 means that all threads update the same philosopher on a table with 3 seats
     * philosophers < 0 mean that threads are placed with every (-philosophers) place with a table precisely as large as needed (except no less than 3 philosophers).
+    * philosophers < -4 should be pointless (on -4 there are no more interactions, less than that just increases dead space between active philosophers)
     */
-  @Param(Array("-5", "-4", "-3", "-2", "-1", "0", "16", "32", "64", "128"))
+  @Param(Array("-4", "-3", "-2", "-1", "0", "16", "32", "64", "128"))
   var philosophers: Int = _
   @Param(Array("event", "signal", "none", "singleFold"))
   var topper: String = _

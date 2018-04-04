@@ -2,7 +2,7 @@ package benchmarks.simple
 
 import java.util.concurrent.TimeUnit
 
-import benchmarks.{EngineParam, Size, Step}
+import benchmarks.{EngineParam, Size, Step, Workload}
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.BenchmarkParams
 import rescala.core.{Scheduler, Struct}
@@ -20,16 +20,19 @@ class Fan[S <: Struct] {
   implicit var engine: Scheduler[S] = _
 
   var source: Var[Int, S] = _
-  var result: Signal[Int, S] = _
+//  var result: Signal[Int, S] = _
 
   @Setup
-  def setup(params: BenchmarkParams, size: Size, step: Step, engineParam: EngineParam[S]) = {
+  def setup(params: BenchmarkParams, size: Size, work: Workload, step: Step, engineParam: EngineParam[S]) = {
     engine = engineParam.engine
     source = Var(step.run())
-    val res = for (_ <- Range(0, size.size)) yield {
-      source.map(_ + 1)
+    val res = for (_ <- 1 to size.size) yield {
+      source.map { x =>
+        work.consume()
+        x + 1
+      }
     }
-    result = Signals.lift(res) { _.sum }
+//    result = Signals.lift(res) { _.sum }
   }
 
   @Benchmark

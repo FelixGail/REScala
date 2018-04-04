@@ -69,10 +69,10 @@ sub prettyName($name) {
 sub styleByName($name) {
   given($name) {
     when (/$NAME_PARRP/)     { 'linecolor "dark-green" lt 2 lw 2 pt 7  ps 1' }
-    when (/$NAME_STM/)       { 'linecolor "blue"       lt 2 lw 2 pt 5  ps 1' }
+    when (/$NAME_STM/)       { 'linecolor "dark-green"       lt 2 lw 2 pt 7  ps 1' }
     when (/$NAME_COARSE|Restore/)    { 'linecolor "red"       lt 2 lw 2 pt 9  ps 1' }
     when (/fair/)            { 'linecolor "light-blue" lt 2 lw 2 pt 8  ps 1' }
-    when (/$NAME_FULLMV/) { 'linecolor "magenta" lt 2 lw 2 pt 6  ps 1' }
+    when (/$NAME_FULLMV/) { 'linecolor "blue" lt 2 lw 2 pt 5  ps 1' }
     when (/$NAME_FINE/)      { 'linecolor "black"      lt 2 lw 2 pt 11 ps 1' }
     when (/$NAME_RESTORING|Derive/) { 'linecolor "dark-green" lt 2 lw 2 pt 6  ps 1' }
     default { '' }
@@ -128,7 +128,6 @@ sub miscBenchmarks() {
       #local $LEGEND_POS = "left top" if $philosophers == 48  || $philosophers == 16;
       for my $layout (queryChoices("Param: layout", "Param: tableType" => $dynamic, "Param: philosophers" => $philosophers)) {
         # local $YRANGE = "[0:500]" if $philosophers <= 64 && $dynamic eq "static";
-        # local $YRANGE = "[0:400]" if $philosophers <= 32 && $dynamic eq "static";
         # local $YRANGE = "[0:800]" if $philosophers > 64 && $dynamic eq "static";
         # local $YRANGE = "[0:300]" if $dynamic ne "static" && $philosophers <= 64;
         # local $YRANGE = "[0:200]" if $dynamic ne "static" && $philosophers <= 32;
@@ -177,39 +176,47 @@ sub miscBenchmarks() {
     }
 
   }
-  
-  for my $dynamic (queryChoices("Param: dynamicity")) {
-    for my $philosophers (queryChoices("Param: philosophers", "Param: dynamicity" => $dynamic)) {
-      # local $YRANGE = "[0:500]" if $philosophers <= 64 && $dynamic eq "static";
-      # local $YRANGE = "[0:400]" if $philosophers <= 32 && $dynamic eq "static";
-      # local $YRANGE = "[0:800]" if $philosophers > 64 && $dynamic eq "static";
-      # local $YRANGE = "[0:300]" if $dynamic ne "static" && $philosophers <= 64;
-      # local $YRANGE = "[0:200]" if $dynamic ne "static" && $philosophers <= 32;
-      plotBenchmarksFor("${dynamic}-paperphilosophers", $philosophers,
-        map { {Title => $_, "Param: engineName" => $_ , Benchmark => "benchmarks.philosophers.PaperPhilosopherCompetition.eatOnce",
-        "Param: philosophers" => $philosophers, "Param: dynamicity" => $dynamic } }
-          queryChoices("Param: engineName", "Param: dynamicity" => $dynamic, "Param: philosophers" => $philosophers));
-    }
-    
-    my $byPhilosopher = sub($engine) {
-      my @choices = sort {$a <=> $b } queryChoices("Param: philosophers", "Param: engineName" => $engine, "Param: dynamicity" => $dynamic );
-      map { {Title => $engine . " " . $_, "Param: engineName" => $engine , Benchmark => "benchmarks.philosophers.PaperPhilosopherCompetition.eatOnce",
-        "Param: philosophers" => $_, "Param: dynamicity" => $dynamic } } (
-         @choices);
-    };
-    plotBenchmarksFor("${dynamic}-paperphilosophers", "philosopher comparison engine scaling",
-      map { $byPhilosopher->($_) } (queryChoices("Param: engineName", "Param: dynamicity" => $dynamic)));
+
+  for my $topper (queryChoices("Param: topper")) {
+    for my $dynamic (queryChoices("Param: dynamicity", "Param: topper" => $topper)) {
+      for my $philosophers (queryChoices("Param: philosophers", "Param: dynamicity" => $dynamic, "Param: topper" => $topper)) {
+        # local $YRANGE = "[0:500]" if $philosophers <= 64 && $dynamic eq "static";
+        # local $YRANGE = "[0:400]" if $philosophers <= 32 && $dynamic eq "static";
+        # local $YRANGE = "[0:800]" if $philosophers > 64 && $dynamic eq "static";
+        # local $YRANGE = "[0:300]" if $dynamic ne "static" && $philosophers <= 64;
+        local $YRANGE = "[0:150]" if $philosophers == 16 && $topper eq "none";
+        local $YRANGE_ROUND = 150 if $philosophers == 16 && $topper eq "none";
+		local $YTIC_COUNT = 3 if $philosophers == 16 && $topper eq "none";
+        local $YRANGE = "[0:400]" if $philosophers == 64 && $topper eq "none";
+        local $YRANGE_ROUND = 400 if $philosophers == 64 && $topper eq "none";
+        local $YRANGE = "[0:900]" if $philosophers == -4 && $topper eq "none";
+        local $YRANGE_ROUND = 900 if $philosophers == -4 && $topper eq "none";
+        plotBenchmarksFor("paperphilosophers-$topper", "$dynamic-$philosophers",
+          map { {Title => $_, "Param: engineName" => $_ , Benchmark => "benchmarks.philosophers.PaperPhilosopherCompetition.eatOnce",
+          "Param: philosophers" => $philosophers, "Param: dynamicity" => $dynamic, "Param: topper" => $topper } }
+            queryChoices("Param: engineName", "Param: topper" => $topper, "Param: dynamicity" => $dynamic, "Param: philosophers" => $philosophers));
+      }
+
+      my $byPhilosopher = sub($engine) {
+        my @choices = sort {$a <=> $b } queryChoices("Param: philosophers", "Param: topper" => $topper, "Param: engineName" => $engine, "Param: dynamicity" => $dynamic );
+        map { {Title => $engine . " " . $_, "Param: engineName" => $engine , Benchmark => "benchmarks.philosophers.PaperPhilosopherCompetition.eatOnce",
+          "Param: philosophers" => $_, "Param: dynamicity" => $dynamic, "Param: topper" => $topper } } (
+           @choices);
+      };
+      plotBenchmarksFor("paperphilosophers-$topper", "$dynamic comparison engine scaling",
+        map { $byPhilosopher->($_) } (queryChoices("Param: engineName", "Param: topper" => $topper, "Param: dynamicity" => $dynamic)));
 
 
-    plotBenchmarksFor("${dynamic}-paperphilosophers", "Philosopher Table",
-      map { {Title => $_, "Param: engineName" => $_ , Benchmark =>  "benchmarks.philosophers.PaperPhilosopherCompetition.eatOnce", "Param: dynamicity" => $dynamic } }  queryChoices("Param: engineName", "Param: dynamicity" => $dynamic));
+      plotBenchmarksFor("paperphilosophers-$topper", "$dynamic Philosopher Table",
+        map { {Title => $_, "Param: engineName" => $_ , Benchmark =>  "benchmarks.philosophers.PaperPhilosopherCompetition.eatOnce", "Param: dynamicity" => $dynamic, "Param: topper" => $topper } }  queryChoices("Param: engineName", "Param: topper" => $topper, "Param: dynamicity" => $dynamic));
+      
 
-
-    { # varying conflict potential
-      my $threads = 8;
-      my $query = queryDataset(query("Param: philosophers", "Benchmark", "Param: engineName", "Param: dynamicity", "Threads"));
-      plotDatasets("${dynamic}-philosophers", "concurrency-scaling", {xlabel => "Philosophers"},
-        map { $query->(prettyName($_), "benchmarks.philosophers.PaperPhilosopherCompetition.eatOnce", $_, $dynamic, $threads) } queryChoices("Param: engineName", "Param: dynamicity" => $dynamic, "Threads" => $threads));
+      { # varying conflict potential
+        my $threads = 8;
+        my $query = queryDataset(query("Param: philosophers", "Benchmark", "Param: engineName", "Param: dynamicity", "Threads"));
+        plotDatasets("paperphilosophers-$topper", "${dynamic}-concurrency-scaling", {xlabel => "Philosophers"},
+          map { $query->(prettyName($_), "benchmarks.philosophers.PaperPhilosopherCompetition.eatOnce", $_, $dynamic, $threads) } queryChoices("Param: engineName", "Param: topper" => $topper, "Param: dynamicity" => $dynamic, "Threads" => $threads));
+      }
     }
   }
 
@@ -253,11 +260,11 @@ sub miscBenchmarks() {
   }
 
 
-  { # dynamic stacks
-    plotBenchmarksFor("stacks", "Dynamic",
-      map {{Title => $_, "Param: work" => 0, "Param: engineName" => $_ , Benchmark => "benchmarks.dynamic.Stacks.run" }}
-        queryChoices("Param: engineName", Benchmark => "benchmarks.dynamic.Stacks.run"));
-    }
+  { # natural per-thread copies
+    plotBenchmarksFor("simple", "Natural",
+      map {{Title => $_, "Param: work" => 0, "Param: engineName" => $_ , Benchmark => "benchmarks.simple.NaturalGraph.run" }}
+        queryChoices("Param: engineName", Benchmark => "benchmarks.simple.NaturalGraph.run"));
+  }
 
   { # simplePhil
     local $NAME_FINE = "No Synchron";
@@ -481,7 +488,7 @@ sub makeLegend() {
   my $chart = Chart::Gnuplot->new(
     output => "legend.pdf",
     terminal => "$GNUPLOT_TERMINAL enhanced font '$FONT,$FONTSIZE'",
-    key => "top left horizontal",
+    key => "top left vertical",
     %MARGINS,
     xrange => "[0:1]",
     yrange => "[0:1]",

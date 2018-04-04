@@ -27,7 +27,7 @@ class SingleChainSignal[S <: Struct] extends BusyThreads {
     result = source
     for (i <- 1 to size.size) {
       result = REName.named(s"map-$i") { implicit! =>
-        result.map{v => val r = v + 1; work.consume(); r}
+        result.map{v => work.consume(); v + 1}
       }
     }
   }
