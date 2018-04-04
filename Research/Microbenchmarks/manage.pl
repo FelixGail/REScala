@@ -233,6 +233,18 @@ sub selection {
 
       for my $threads (8,16) {
         for my $work (0,100,200,400,800,1600,3200) {
+          my $name0 = "plainwork-threads-$threads-work-$work";
+          my $program0 = makeRunString( $name0,
+            fromBaseConfig(
+              p => { # parameters
+                work => $work,
+              },
+              t => $threads, #threads
+            ),
+            "simple.PlainWork"
+          );
+          push @runs, {name => $name0, program => $program0};
+
           my $name = "chain-threads-$threads-work-$work";
           my $program = makeRunString( $name,
             fromBaseConfig(
