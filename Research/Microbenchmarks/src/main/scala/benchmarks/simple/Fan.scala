@@ -20,13 +20,13 @@ class Fan[S <: Struct] {
   implicit var engine: Scheduler[S] = _
 
   var source: Var[Int, S] = _
-//  var result: Signal[Int, S] = _
+  var res: Seq[Signal[Int, S]] = _
 
   @Setup
   def setup(params: BenchmarkParams, size: Size, work: Workload, step: Step, engineParam: EngineParam[S]) = {
     engine = engineParam.engine
     source = Var(step.run())
-    val res = for (_ <- 1 to size.size) yield {
+    res = for (_ <- 1 to size.size) yield {
       source.map { x =>
         work.consume()
         x + 1
