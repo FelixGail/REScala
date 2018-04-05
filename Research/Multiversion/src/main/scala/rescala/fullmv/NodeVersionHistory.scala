@@ -1,8 +1,9 @@
 package rescala.fullmv
 
-import java.util.concurrent.locks.{LockSupport, ReentrantReadWriteLock}
+import java.util.concurrent.locks.LockSupport
 
 import rescala.core.Initializer.InitValues
+
 import rescala.fullmv.NodeVersionHistory._
 
 import scala.annotation.elidable.ASSERTION
@@ -51,7 +52,6 @@ object NotificationResultAction {
   * @tparam OutDep the type of outgoing dependency nodes
   */
 class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePersistency: InitValues[V]) {
-  val lock = new ReentrantReadWriteLock()
   class Version(val txn: T, @volatile var lastWrittenPredecessorIfStable: Version, var out: Set[OutDep], var pending: Int, var changed: Int, @volatile var value: Option[V]) /*extends MyManagedBlocker*/ {
     // txn >= Executing, stable == true, node reevaluation completed changed
     def isWritten: Boolean = changed == 0 && value.isDefined
@@ -595,96 +595,96 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
   }
 
   private def tryRecordRelationship(attemptPredecessor: T, predPos: Int, succToRecord: T, defender: T, contender: T, sccState: SCCState): (TryRecordResult, SCCState) = {
-//    @inline @tailrec def tryRecordRelationship0(sccState: SCCState): (TryRecordResult, SCCState) = {
-      sccState match {
-        case x: LockedSameSCC =>
-          if (attemptPredecessor.isTransitivePredecessor(succToRecord)) {
-            (FailedFinalAndRecorded, x)
-          } else {
-            ensurePredecessorRelationRecordedUnderLock(attemptPredecessor, predPos, succToRecord)
-            (Succeeded, x)
-          }
-        case otherwise =>
-          if (attemptPredecessor.phase == TurnPhase.Completed) {
-            assert(predPos >= 0, s"supposed-to-be predecessor $attemptPredecessor completed this having been assumed impossible")
-            if(predPos < 0) throw new AssertionError(s"supposed-to-be predecessor $attemptPredecessor completed this having been assumed impossible")
-            latestGChint = predPos
-//            SerializationGraphTracking.abortContending()
-            (Succeeded, sccState)
-          } else if(succToRecord.isTransitivePredecessor(attemptPredecessor)) {
-//            SerializationGraphTracking.abortContending()
-            (Succeeded, sccState.known)
-          } else if (attemptPredecessor.isTransitivePredecessor(succToRecord)) {
-//            SerializationGraphTracking.abortContending()
-            (FailedFinalAndRecorded, sccState.known)
-          } else {
-//            tryRecordRelationship0(SerializationGraphTracking.tryLock(defender, contender, sccState))
-            tryRecordRelationship(attemptPredecessor, predPos, succToRecord, defender, contender, SerializationGraphTracking.tryLock(defender, contender, sccState))
-          }
-      }
-//    }
-//    sccState match {
-//      case x: LockedSameSCC =>
-//        if (attemptPredecessor.isTransitivePredecessor(succToRecord)) {
-//          (FailedFinalAndRecorded, x)
-//        } else {
-//          ensurePredecessorRelationRecordedUnderLock(attemptPredecessor, predPos, succToRecord)
-//          (Succeeded, x)
-//        }
-//      case otherwise =>
-//        if (attemptPredecessor.phase == TurnPhase.Completed) {
-//          assert(predPos >= 0, s"supposed-to-be predecessor $attemptPredecessor completed this having been assumed impossible")
-//          latestGChint = predPos
-//          (Succeeded, sccState)
-//        } else if (succToRecord.isTransitivePredecessor(attemptPredecessor)) {
-//          (Succeeded, sccState.known)
-//        } else if (attemptPredecessor.isTransitivePredecessor(succToRecord)) {
-//          (FailedFinalAndRecorded, sccState.known)
-//        } else {
-//          SerializationGraphTracking.startContending()
-//          tryRecordRelationship0(SerializationGraphTracking.tryLock(defender, contender, sccState))
-//        }
-//    }
+    //    @inline @tailrec def tryRecordRelationship0(sccState: SCCState): (TryRecordResult, SCCState) = {
+    sccState match {
+      case x: LockedSameSCC =>
+        if (attemptPredecessor.isTransitivePredecessor(succToRecord)) {
+          (FailedFinalAndRecorded, x)
+        } else {
+          ensurePredecessorRelationRecordedUnderLock(attemptPredecessor, predPos, succToRecord)
+          (Succeeded, x)
+        }
+      case otherwise =>
+        if (attemptPredecessor.phase == TurnPhase.Completed) {
+          assert(predPos >= 0, s"supposed-to-be predecessor $attemptPredecessor completed this having been assumed impossible")
+          if(predPos < 0) throw new AssertionError(s"supposed-to-be predecessor $attemptPredecessor completed this having been assumed impossible")
+          latestGChint = predPos
+          //            SerializationGraphTracking.abortContending()
+          (Succeeded, sccState)
+        } else if(succToRecord.isTransitivePredecessor(attemptPredecessor)) {
+          //            SerializationGraphTracking.abortContending()
+          (Succeeded, sccState.known)
+        } else if (attemptPredecessor.isTransitivePredecessor(succToRecord)) {
+          //            SerializationGraphTracking.abortContending()
+          (FailedFinalAndRecorded, sccState.known)
+        } else {
+          //            tryRecordRelationship0(SerializationGraphTracking.tryLock(defender, contender, sccState))
+          tryRecordRelationship(attemptPredecessor, predPos, succToRecord, defender, contender, SerializationGraphTracking.tryLock(defender, contender, sccState))
+        }
+    }
+    //    }
+    //    sccState match {
+    //      case x: LockedSameSCC =>
+    //        if (attemptPredecessor.isTransitivePredecessor(succToRecord)) {
+    //          (FailedFinalAndRecorded, x)
+    //        } else {
+    //          ensurePredecessorRelationRecordedUnderLock(attemptPredecessor, predPos, succToRecord)
+    //          (Succeeded, x)
+    //        }
+    //      case otherwise =>
+    //        if (attemptPredecessor.phase == TurnPhase.Completed) {
+    //          assert(predPos >= 0, s"supposed-to-be predecessor $attemptPredecessor completed this having been assumed impossible")
+    //          latestGChint = predPos
+    //          (Succeeded, sccState)
+    //        } else if (succToRecord.isTransitivePredecessor(attemptPredecessor)) {
+    //          (Succeeded, sccState.known)
+    //        } else if (attemptPredecessor.isTransitivePredecessor(succToRecord)) {
+    //          (FailedFinalAndRecorded, sccState.known)
+    //        } else {
+    //          SerializationGraphTracking.startContending()
+    //          tryRecordRelationship0(SerializationGraphTracking.tryLock(defender, contender, sccState))
+    //        }
+    //    }
   }
 
   private def ensureRelationIsRecorded(predecessor: T, predPos: Int, successor: T, defender: T, contender: T, sccState: SCCState): SCCState = {
-//    @inline @tailrec def ensureRelationIsRecorded0(sccState: SCCState): SCCState = {
-      sccState match {
-        case x: LockedSameSCC =>
-          ensurePredecessorRelationRecordedUnderLock(predecessor, predPos, successor)
-          x
-        case otherwise =>
-          if (predecessor.phase == TurnPhase.Completed) {
-            assert(predPos >= 0, s"supposed-to-be predecessor $predecessor completed this having been assumed impossible")
-            if(predPos < 0) throw new AssertionError(s"supposed-to-be predecessor $predecessor completed this having been assumed impossible")
-            latestGChint = predPos
-//            SerializationGraphTracking.abortContending()
-            sccState
-          } else if (successor.isTransitivePredecessor(predecessor)) {
-//            SerializationGraphTracking.abortContending()
-            sccState.known
-          } else {
-//            ensureRelationIsRecorded0(SerializationGraphTracking.tryLock(defender, contender, sccState))
-            ensureRelationIsRecorded(predecessor, predPos, successor, defender, contender, SerializationGraphTracking.tryLock(defender, contender, sccState))
-          }
+    //    @inline @tailrec def ensureRelationIsRecorded0(sccState: SCCState): SCCState = {
+    sccState match {
+      case x: LockedSameSCC =>
+        ensurePredecessorRelationRecordedUnderLock(predecessor, predPos, successor)
+        x
+      case otherwise =>
+        if (predecessor.phase == TurnPhase.Completed) {
+          assert(predPos >= 0, s"supposed-to-be predecessor $predecessor completed this having been assumed impossible")
+          if(predPos < 0) throw new AssertionError(s"supposed-to-be predecessor $predecessor completed this having been assumed impossible")
+          latestGChint = predPos
+          //            SerializationGraphTracking.abortContending()
+          sccState
+        } else if (successor.isTransitivePredecessor(predecessor)) {
+          //            SerializationGraphTracking.abortContending()
+          sccState.known
+        } else {
+          //            ensureRelationIsRecorded0(SerializationGraphTracking.tryLock(defender, contender, sccState))
+          ensureRelationIsRecorded(predecessor, predPos, successor, defender, contender, SerializationGraphTracking.tryLock(defender, contender, sccState))
         }
-//    }
-//    sccState match {
-//      case x: LockedSameSCC =>
-//        ensurePredecessorRelationRecordedUnderLock(predecessor, predPos, successor)
-//        x
-//      case otherwise =>
-//        if (predecessor.phase == TurnPhase.Completed) {
-//          assert(predPos >= 0, s"supposed-to-be predecessor $predecessor completed this having been assumed impossible")
-//          latestGChint = predPos
-//          sccState
-//        } else if (successor.isTransitivePredecessor(predecessor)) {
-//          sccState.known
-//        } else {
-//          SerializationGraphTracking.startContending()
-//          ensureRelationIsRecorded0(SerializationGraphTracking.tryLock(defender, contender, sccState))
-//        }
-//    }
+    }
+    //    }
+    //    sccState match {
+    //      case x: LockedSameSCC =>
+    //        ensurePredecessorRelationRecordedUnderLock(predecessor, predPos, successor)
+    //        x
+    //      case otherwise =>
+    //        if (predecessor.phase == TurnPhase.Completed) {
+    //          assert(predPos >= 0, s"supposed-to-be predecessor $predecessor completed this having been assumed impossible")
+    //          latestGChint = predPos
+    //          sccState
+    //        } else if (successor.isTransitivePredecessor(predecessor)) {
+    //          sccState.known
+    //        } else {
+    //          SerializationGraphTracking.startContending()
+    //          ensureRelationIsRecorded0(SerializationGraphTracking.tryLock(defender, contender, sccState))
+    //        }
+    //    }
   }
 
   private def ensurePredecessorRelationRecordedUnderLock(predecessor: T, predPos: Int, successor: T): Unit = {
@@ -731,15 +731,10 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     *
     * @param txn the transaction visiting the node for framing
     */
-  def incrementFrame(txn: T): FramingBranchResult[T, OutDep] = {
-    lock.writeLock.lock()
-    try {
-      val result = incrementFrame0(txn, getFramePositionFraming(txn))
-      assertOptimizationsIntegrity(s"incrementFrame($txn) -> $result")
-      result
-    } finally {
-      lock.writeLock.unlock()
-    }
+  def incrementFrame(txn: T): FramingBranchResult[T, OutDep] = synchronized {
+    val result = incrementFrame0(txn, getFramePositionFraming(txn))
+    assertOptimizationsIntegrity(s"incrementFrame($txn) -> $result")
+    result
   }
 
   /**
@@ -747,53 +742,38 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * @param txn the transaction visiting the node for framing
     * @param supersede the transaction whose frame was superseded by the visiting transaction at the previous node
     */
-  def incrementSupersedeFrame(txn: T, supersede: T): FramingBranchResult[T, OutDep] = {
-    lock.writeLock.lock()
-    try {
-      val (position, supersedePos) = getFramePositionsFraming(txn, supersede)
-      val version = _versions(position)
-      version.pending += 1
-      val result = if(position < firstFrame && _versions(position).pending == 1) {
-        _versions(supersedePos).pending -= 1
-        incrementFrameResultAfterNewFirstFrameWasCreated(txn, position)
-      } else {
-        decrementFrame0(supersede, supersedePos)
-      }
-      assertOptimizationsIntegrity(s"incrementSupersedeFrame($txn, $supersede) -> $result")
-      result
-    } finally {
-      lock.writeLock.unlock()
+  def incrementSupersedeFrame(txn: T, supersede: T): FramingBranchResult[T, OutDep] = synchronized {
+    val (position, supersedePos) = getFramePositionsFraming(txn, supersede)
+    val version = _versions(position)
+    version.pending += 1
+    val result = if(position < firstFrame && _versions(position).pending == 1) {
+      _versions(supersedePos).pending -= 1
+      incrementFrameResultAfterNewFirstFrameWasCreated(txn, position)
+    } else {
+      decrementFrame0(supersede, supersedePos)
     }
+    assertOptimizationsIntegrity(s"incrementSupersedeFrame($txn, $supersede) -> $result")
+    result
   }
 
-  def decrementFrame(txn: T): FramingBranchResult[T, OutDep] = {
-    lock.writeLock.lock()
-    try {
-      val result = decrementFrame0(txn, getFramePositionFraming(txn))
-      assertOptimizationsIntegrity(s"decrementFrame($txn) -> $result")
-      result
-    } finally {
-      lock.writeLock.unlock()
-    }
+  def decrementFrame(txn: T): FramingBranchResult[T, OutDep] = synchronized {
+    val result = decrementFrame0(txn, getFramePositionFraming(txn))
+    assertOptimizationsIntegrity(s"decrementFrame($txn) -> $result")
+    result
   }
 
-  def decrementReframe(txn: T, reframe: T): FramingBranchResult[T, OutDep] = {
-    lock.writeLock.lock()
-    try {
-      val (position, reframePos) = getFramePositionsFraming(txn, reframe)
-      val version = _versions(position)
-      version.pending += -1
-      val result = if(position == firstFrame && version.pending == 0) {
-        _versions(reframePos).pending += 1
-        deframeResultAfterPreviousFirstFrameWasRemoved(txn, version)
-      } else {
-        incrementFrame0(reframe, reframePos)
-      }
-      assertOptimizationsIntegrity(s"deframeReframe($txn, $reframe) -> $result")
-      result
-    } finally {
-      lock.writeLock.unlock()
+  def decrementReframe(txn: T, reframe: T): FramingBranchResult[T, OutDep] = synchronized {
+    val (position, reframePos) = getFramePositionsFraming(txn, reframe)
+    val version = _versions(position)
+    version.pending += -1
+    val result = if(position == firstFrame && version.pending == 0) {
+      _versions(reframePos).pending += 1
+      deframeResultAfterPreviousFirstFrameWasRemoved(txn, version)
+    } else {
+      incrementFrame0(reframe, reframePos)
     }
+    assertOptimizationsIntegrity(s"deframeReframe($txn, $reframe) -> $result")
+    result
   }
 
   private def incrementFrame0(txn: T, position: Int): FramingBranchResult[T, OutDep] = {
@@ -870,15 +850,10 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * @param txn the transaction sending the notification
     * @param changed whether or not the dependency changed
     */
-  def notify(txn: T, changed: Boolean): NotificationResultAction[T, OutDep] = {
-    lock.writeLock.lock()
-    try {
-      val result = notify0(getFramePositionPropagating(txn), txn, changed)
-      assertOptimizationsIntegrity(s"notify($txn, $changed) -> $result")
-      result
-    } finally {
-      lock.writeLock.unlock()
-    }
+  def notify(txn: T, changed: Boolean): NotificationResultAction[T, OutDep] = synchronized {
+    val result = notify0(getFramePositionPropagating(txn), txn, changed)
+    assertOptimizationsIntegrity(s"notify($txn, $changed) -> $result")
+    result
   }
 
   /**
@@ -887,17 +862,12 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * @param changed whether or not the dependency changed
     * @param followFrame a transaction for which to create a subsequent frame, furthering its partial framing.
     */
-  def notifyFollowFrame(txn: T, changed: Boolean, followFrame: T): NotificationResultAction[T, OutDep] = {
-    lock.writeLock.lock()
-    try {
-      val (pos, followPos) = getFramePositionsPropagating(txn, followFrame)
-      _versions(followPos).pending += 1
-      val result = notify0(pos, txn, changed)
-      assertOptimizationsIntegrity(s"notifyFollowFrame($txn, $changed, $followFrame) -> $result")
-      result
-    } finally {
-      lock.writeLock.unlock()
-    }
+  def notifyFollowFrame(txn: T, changed: Boolean, followFrame: T): NotificationResultAction[T, OutDep] = synchronized {
+    val (pos, followPos) = getFramePositionsPropagating(txn, followFrame)
+    _versions(followPos).pending += 1
+    val result = notify0(pos, txn, changed)
+    assertOptimizationsIntegrity(s"notifyFollowFrame($txn, $changed, $followFrame) -> $result")
+    result
   }
 
   private def notify0(position: Int, txn: T, changed: Boolean): NotificationResultAction[T, OutDep] = {
@@ -936,14 +906,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
   }
 
   def reevIn(turn: T): V = {
-    assert({
-      lock.readLock.lock()
-      try {
-        _versions(firstFrame).txn == turn
-      } finally {
-        lock.readLock.unlock()
-      }
-    }, s"$turn called reevIn, but is not first frame owner in $this")
+    assert(synchronized {_versions(firstFrame).txn == turn }, s"$turn called reevIn, but is not first frame owner in $this")
     latestValue
   }
 
@@ -951,34 +914,29 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * progress [[firstFrame]] forward until a [[Version.isFrame]] is encountered, and
     * return the resulting notification out (with reframing if subsequent write is found).
     */
-  def reevOut(turn: T, maybeValue: Option[V]): NotificationResultAction.ReevOutResult[T, OutDep] = {
-    lock.writeLock.lock()
-    try {
-      val position = firstFrame
-      val version = _versions(position)
-      assert(version.txn == turn, s"$turn called reevDone, but first frame is $version (different transaction)")
-      assert(!version.isWritten, s"$turn cannot write twice: $version")
+  def reevOut(turn: T, maybeValue: Option[V]): NotificationResultAction.ReevOutResult[T, OutDep] = synchronized {
+    val position = firstFrame
+    val version = _versions(position)
+    assert(version.txn == turn, s"$turn called reevDone, but first frame is $version (different transaction)")
+    assert(!version.isWritten, s"$turn cannot write twice: $version")
 
-      val result = if(version.pending != 0) {
-        NotificationResultAction.Glitched
+    val result = if(version.pending != 0) {
+      NotificationResultAction.Glitched
+    } else {
+      assert((version.isFrame && version.isReadyForReevaluation) || (maybeValue.isEmpty && version.isReadOrDynamic), s"$turn cannot write changed=${maybeValue.isDefined} in $this")
+      version.changed = 0
+      latestReevOut = position
+      val stabilizeTo = if (maybeValue.isDefined) {
+        latestValue = valuePersistency.unchange.unchange(maybeValue.get)
+        version.value = maybeValue
+        version
       } else {
-        assert((version.isFrame && version.isReadyForReevaluation) || (maybeValue.isEmpty && version.isReadOrDynamic), s"$turn cannot write changed=${maybeValue.isDefined} in $this")
-        version.changed = 0
-        latestReevOut = position
-        val stabilizeTo = if (maybeValue.isDefined) {
-          latestValue = valuePersistency.unchange.unchange(maybeValue.get)
-          version.value = maybeValue
-          version
-        } else {
-          version.lastWrittenPredecessorIfStable
-        }
-        progressToNextWriteForNotification(version, stabilizeTo)
+        version.lastWrittenPredecessorIfStable
       }
-      assertOptimizationsIntegrity(s"reevOut($turn, ${maybeValue.isDefined}) -> $result")
-      result
-    } finally {
-      lock.writeLock.unlock()
+      progressToNextWriteForNotification(version, stabilizeTo)
     }
+    assertOptimizationsIntegrity(s"reevOut($turn, ${maybeValue.isDefined}) -> $result")
+    result
   }
 
   /**
@@ -1036,27 +994,21 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     *         own writes.
     */
   def dynamicBefore(txn: T): V = {
-//    assert(!valuePersistency.isTransient, s"$txn invoked dynamicBefore on transient node")
-    lock.writeLock.lock()
-    val version = try {
+    //    assert(!valuePersistency.isTransient, s"$txn invoked dynamicBefore on transient node")
+    val version = synchronized {
       val pos = ensureReadVersion(txn)
       // DO NOT INLINE THIS! it breaks the code! see https://scastie.scala-lang.org/briJDRO3RCmIMEd1zApmBQ
       _versions(pos)
-    } finally {
-      lock.writeLock.unlock()
     }
     if(!version.isStable) version.blockForStable()
     version.lastWrittenPredecessorIfStable.value.get
   }
 
   def staticBefore(txn: T): V = {
-//    assert(!valuePersistency.isTransient, s"$txn invoked staticBefore on transient struct")
-    lock.readLock.lock()
-    val version = try {
+    //    assert(!valuePersistency.isTransient, s"$txn invoked staticBefore on transient struct")
+    val version = synchronized {
       val pos = findFinalPosition(txn)
       _versions(if (pos < 0) -pos - 1 else pos)
-    } finally {
-      lock.readLock.unlock()
     }
     if(version.txn != txn && version.value.isDefined) {
       version.value.get
@@ -1072,13 +1024,10 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     *         transaction's own write if one has occurred or will occur.
     */
   def dynamicAfter(txn: T): V = {
-    lock.writeLock.lock()
-    val version = try {
+    val version = synchronized {
       val pos = ensureReadVersion(txn)
       // DO NOT INLINE THIS! it breaks the code! see https://scastie.scala-lang.org/briJDRO3RCmIMEd1zApmBQ
       _versions(pos)
-    } finally {
-      lock.writeLock.unlock()
     }
     if(!version.isStable) version.blockForStable()
     if (version.value.isDefined) {
@@ -1089,14 +1038,11 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
   }
 
   def staticAfter(txn: T): V = {
-  lock.readLock.lock()
-  val version = try {
-    val pos = findFinalPosition(txn)
-    _versions(if (pos < 0) -pos - 1 else pos)
-  } finally {
-    lock.readLock.unlock()
-  }
-  if(version.value.isDefined) {
+    val version = synchronized {
+      val pos = findFinalPosition(txn)
+      _versions(if (pos < 0) -pos - 1 else pos)
+    }
+    if(version.value.isDefined) {
       if(version.txn == txn) {
         version.value.get
       } else {
@@ -1115,15 +1061,10 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * @param add the new edge's sink node
     * @return the appropriate [[Version.value]].
     */
-  def discover(txn: T, add: OutDep): (Seq[T], Option[T]) = {
-    lock.writeLock.lock()
-    try {
-      val position = ensureReadVersion(txn)
-      assert(!_versions(position).out.contains(add), "must not discover an already existing edge!")
-      retrofitSourceOuts(position, add, +1)
-    } finally {
-      lock.writeLock.unlock()
-    }
+  def discover(txn: T, add: OutDep): (Seq[T], Option[T]) = synchronized {
+    val position = ensureReadVersion(txn)
+    assert(!_versions(position).out.contains(add), "must not discover an already existing edge!")
+    retrofitSourceOuts(position, add, +1)
   }
 
   /**
@@ -1131,15 +1072,10 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * @param txn the executing reevaluation's transaction
     * @param remove the removed edge's sink node
     */
-  def drop(txn: T, remove: OutDep): (Seq[T], Option[T]) = {
-    lock.writeLock.lock()
-    try {
-      val position = ensureReadVersion(txn)
-      assert(_versions(position).out.contains(remove), "must not drop a non-existing edge!")
-      retrofitSourceOuts(position, remove, -1)
-    } finally {
-      lock.writeLock.unlock()
-    }
+  def drop(txn: T, remove: OutDep): (Seq[T], Option[T]) = synchronized {
+    val position = ensureReadVersion(txn)
+    assert(_versions(position).out.contains(remove), "must not drop a non-existing edge!")
+    retrofitSourceOuts(position, remove, -1)
   }
 
   /**
@@ -1148,34 +1084,29 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * @param maybeSuccessorFrame maybe a reframing to perform for the first successor frame
     * @param arity +1 for discover adding frames, -1 for drop removing frames.
     */
-  def retrofitSinkFrames(successorWrittenVersions: Seq[T], maybeSuccessorFrame: Option[T], arity: Int): Unit = {
-    lock.writeLock.lock()
-    try {
-      require(math.abs(arity) == 1)
-      var minPos = firstFrame
-      for(txn <- successorWrittenVersions) {
-        val position = ensureReadVersion(txn, minPos)
-        val version = _versions(position)
-        // note: if drop retrofitting overtook a change notification, changed may update from 0 to -1 here!
-        version.changed += arity
-        minPos = position + 1
-      }
-
-      if (maybeSuccessorFrame.isDefined) {
-        val txn = maybeSuccessorFrame.get
-        val position = ensureReadVersion(txn, minPos)
-        val version = _versions(position)
-        // note: conversely, if a (no)change notification overtook discovery retrofitting, pending may change
-        // from -1 to 0 here. No handling is required for this case, because firstFrame < position is an active
-        // reevaluation (the one that's executing the discovery) and will afterwards progressToNextWrite, thereby
-        // executing this then-ready reevaluation, but for now the version is guaranteed not stable yet.
-        version.pending += arity
-      }
-      // cannot make this assertion here because dynamic events might make the firstFrame not a frame when dropping the only incoming changed dependency..
-      //assertOptimizationsIntegrity(s"retrofitSinkFrames(writes=$successorWrittenVersions, maybeFrame=$maybeSuccessorFrame)")
-    } finally {
-      lock.writeLock.unlock()
+  def retrofitSinkFrames(successorWrittenVersions: Seq[T], maybeSuccessorFrame: Option[T], arity: Int): Unit = synchronized {
+    require(math.abs(arity) == 1)
+    var minPos = firstFrame
+    for(txn <- successorWrittenVersions) {
+      val position = ensureReadVersion(txn, minPos)
+      val version = _versions(position)
+      // note: if drop retrofitting overtook a change notification, changed may update from 0 to -1 here!
+      version.changed += arity
+      minPos = position + 1
     }
+
+    if (maybeSuccessorFrame.isDefined) {
+      val txn = maybeSuccessorFrame.get
+      val position = ensureReadVersion(txn, minPos)
+      val version = _versions(position)
+      // note: conversely, if a (no)change notification overtook discovery retrofitting, pending may change
+      // from -1 to 0 here. No handling is required for this case, because firstFrame < position is an active
+      // reevaluation (the one that's executing the discovery) and will afterwards progressToNextWrite, thereby
+      // executing this then-ready reevaluation, but for now the version is guaranteed not stable yet.
+      version.pending += arity
+    }
+    // cannot make this assertion here because dynamic events might make the firstFrame not a frame when dropping the only incoming changed dependency..
+    //assertOptimizationsIntegrity(s"retrofitSinkFrames(writes=$successorWrittenVersions, maybeFrame=$maybeSuccessorFrame)")
   }
 
   /**
@@ -1211,15 +1142,10 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     (successorWrittenVersions, maybeSuccessorFrame)
   }
 
-  def fullGC(): Int = {
-    lock.writeLock.lock()
-    try {
-      moveGCHintToLatestCompleted()
-      gcAndLeaveHoles(_versions, _versions(latestGChint).value.isDefined, 0, -1, -1)
-      lastGCcount
-    } finally {
-      lock.writeLock.unlock()
-    }
+  def fullGC(): Int = synchronized {
+    moveGCHintToLatestCompleted()
+    gcAndLeaveHoles(_versions, _versions(latestGChint).value.isDefined, 0, -1, -1)
+    lastGCcount
   }
 
   private def moveGCHintToLatestCompleted(): Unit = {
@@ -1230,8 +1156,8 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
         val idx = latestGChint + (to - latestGChint + 1) / 2
         // 0 + (1 - 0 + 1) / 2 = 1
         if (_versions(idx).txn.phase == TurnPhase.Completed) {
-            latestGChint = idx
-            findLastCompleted(to)
+          latestGChint = idx
+          findLastCompleted(to)
         } else {
           findLastCompleted(idx - 1)
         }
