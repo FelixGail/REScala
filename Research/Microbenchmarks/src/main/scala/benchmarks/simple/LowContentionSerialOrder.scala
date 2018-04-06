@@ -29,7 +29,7 @@ class LowContentionSerialOrder[S <: Struct] extends BusyThreads {
     grid = Array.tabulate(size - 1) { t =>
       val a = size - 1 - t
       Array.tabulate(a) { b =>
-        Signals.lift(sources(a), sources(b)) { _ + _ }
+        Signals.lift(sources(a), sources(b)) { (va, vb) => work.consume(); va + vb }
       }
     }
   }
