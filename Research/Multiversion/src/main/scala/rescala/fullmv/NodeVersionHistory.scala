@@ -1,9 +1,9 @@
 package rescala.fullmv
 
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.LockSupport
 
 import rescala.core.Initializer.InitValues
-
 import rescala.fullmv.NodeVersionHistory._
 
 import scala.annotation.elidable.ASSERTION
@@ -163,8 +163,10 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
 
   // =================== STORAGE ====================
 
+  val indexedVersions = new ConcurrentHashMap[T, Version]()
   var _versions = new Array[Version](11)
   _versions(0) = new Version(init, lastWrittenPredecessorIfStable = null, out = Set(), pending = 0, changed = 0, Some(valuePersistency.initialValue))
+  indexedVersions.put(init, _versions(0))
   var size = 1
   var latestValue: V = valuePersistency.initialValue
   var incomings: Set[InDep] = Set.empty
@@ -174,6 +176,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     val predVersion = _versions(position - 1)
     val lastWrittenPredecessorIfStable = computeSuccessorWrittenPredecessorIfStable(predVersion)
     val version = new Version(txn, lastWrittenPredecessorIfStable, predVersion.out, pending = 0, changed = 0, None)
+    indexedVersions.put(txn, version)
     size += 1
     _versions(position) = version
     if (position <= firstFrame) firstFrame += 1
@@ -995,7 +998,8 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     */
   def dynamicBefore(txn: T): V = {
     //    assert(!valuePersistency.isTransient, s"$txn invoked dynamicBefore on transient node")
-    val version = synchronized {
+    val maybeVersion = indexedVersions.get(txn)
+    val version = if(maybeVersion != null) maybeVersion else synchronized {
       val pos = ensureReadVersion(txn)
       // DO NOT INLINE THIS! it breaks the code! see https://scastie.scala-lang.org/briJDRO3RCmIMEd1zApmBQ
       _versions(pos)
@@ -1006,7 +1010,8 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
 
   def staticBefore(txn: T): V = {
     //    assert(!valuePersistency.isTransient, s"$txn invoked staticBefore on transient struct")
-    val version = synchronized {
+    val maybeVersion = indexedVersions.get(txn)
+    val version = if(maybeVersion != null) maybeVersion else synchronized {
       val pos = findFinalPosition(txn)
       _versions(if (pos < 0) -pos - 1 else pos)
     }
@@ -1024,7 +1029,8 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     *         transaction's own write if one has occurred or will occur.
     */
   def dynamicAfter(txn: T): V = {
-    val version = synchronized {
+    val maybeVersion = indexedVersions.get(txn)
+    val version = if(maybeVersion != null) maybeVersion else synchronized {
       val pos = ensureReadVersion(txn)
       // DO NOT INLINE THIS! it breaks the code! see https://scastie.scala-lang.org/briJDRO3RCmIMEd1zApmBQ
       _versions(pos)
@@ -1038,7 +1044,8 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
   }
 
   def staticAfter(txn: T): V = {
-    val version = synchronized {
+    val maybeVersion = indexedVersions.get(txn)
+    val version = if(maybeVersion != null) maybeVersion else synchronized {
       val pos = findFinalPosition(txn)
       _versions(if (pos < 0) -pos - 1 else pos)
     }
@@ -1181,8 +1188,12 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
       val predVersion = _versions(size - 1)
       val out = predVersion.out
       val lastWrittenPredecessorIfStable = computeSuccessorWrittenPredecessorIfStable(predVersion)
-      _versions(first) = new Version(one, lastWrittenPredecessorIfStable, out, pending = 0, changed = 0, value = None)
-      _versions(second) = new Version(two, lastWrittenPredecessorIfStable, out, pending = 0, changed = 0, value = None)
+      val v1 = new Version(one, lastWrittenPredecessorIfStable, out, pending = 0, changed = 0, value = None)
+      _versions(first) = v1
+      indexedVersions.put(one, v1)
+      val v2 = new Version(two, lastWrittenPredecessorIfStable, out, pending = 0, changed = 0, value = None)
+      _versions(second) = v2
+      indexedVersions.put(two, v2)
       if(lastWrittenPredecessorIfStable != null) firstFrame += 2
       size += 2
       assertOptimizationsIntegrity(s"arrangeVersionsAppend($insertOne -> $first, $one, $insertTwo -> $second, $two)")
@@ -1289,6 +1300,9 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     // just dump everything before the hint
     if (firstHole < 0 || firstHole == size) {
       // no hole or holes at the end only: the entire array stays in one segment
+      for(i <- 0 until retainFrom) {
+        indexedVersions.remove(_versions(i))
+      }
       System.arraycopy(_versions, retainFrom, writeTo, retainTo, size - retainFrom)
     } else {
       // copy first segment
