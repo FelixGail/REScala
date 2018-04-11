@@ -135,22 +135,23 @@
 //  val head = new AtomicReference(new Version(init, new AtomicReference(null), lastWrittenPredecessorIfStable = null, out = Set(), pending = 0, changed = 0, Some(valuePersistency.initialValue)))
 //  val firstFrame = new AtomicReference[Version](null)
 //  val tail = new AtomicReference(head.get)
-//  val latestReevOut = new AtomicReference(head.get)
+//  val latestKnownStable = new AtomicReference(head.get)
 //
 //  var latestValue: V = valuePersistency.initialValue
 //  var incomings: Set[InDep] = Set.empty
 //
 //  private def findMaxUpTo(txn: T) = {
-//    @tailrec def traverseCompleted(latestHead: Version, current: Version, wasCompleted: Boolean): Version = {
+//    @tailrec def traverseCompleted(lkh: Version, lks: Version, current: Version, wasCompleted: Boolean, wasStable: Boolean): Version = {
 //      val next = current.next.get
 //      if(next == null) {
-//        if(wasCompleted) helpGC(latestHead, current)
+//        if(wasCompleted) helpGC(lkh, current)
 //        current
 //      } else if(next.txn.phase == TurnPhase.Completed) {
-//        traverseCompleted(latestHead, next, wasCompleted = true)
+//        traverseCompleted(lkh, lks, next, wasCompleted = true, wasStable = true)
 //      } else {
-//        val updatedHead = if(wasCompleted) helpGC(latestHead, current) else latestHead
+//        val updatedHead = if(wasCompleted) helpGC(lkh, current) else lkh
 //        if(next.txn == txn || next.txn.isTransitivePredecessor(txn)) {
+//          if(wasStable) helpStable(lks, current)
 //          next
 //        } else {
 //
@@ -165,36 +166,64 @@
 //  case class Found(version: Version) extends FindMaxResult
 //  case class NotFound(orderedBefore: Version, orderedAfter: Version) extends FindMaxResult
 //
+//  // TODO idea: get LKH, start from LKS.
+//  // Help S if any stable encountered
+//  // Help H if LKH encountered and later any completed encountered
+//  // For searching stable, mirror everything.
 //  private def findMaxUpToFraming(txn: T) = {
-//    @tailrec def traverse(latestGuaranteedPredecessor: Version, current: Version): FindMaxResult = {
+//    @tailrec def traverse(lks: Version, current: Version, newHead: Boolean, newStable: Boolean): FindMaxResult = {
 //      val next = current.next.get
 //      if(next.txn == txn) {
+//        if(newHead) helpGC(current)
+//        if(newStable) helpStable(lks, current)
 //        Found(next)
 //      } else if(next == null || next.txn.isTransitivePredecessor(txn)) {
-//        if (txn.isTransitivePredecessor(current.txn) || {
-//          val (tryRecordResult, sccState) = tryRecordRelationship(current.txn, txn, current.txn, txn)
-//          sccState.unlockedIfLocked()
-//          tryRecordResult == Succeeded}) {
+//        if(newHead){
+//          helpGC(current)
+//          helpStable(lks, current)
 //          NotFound(current, next)
 //        } else {
-//          traverse(latestGuaranteedPredecessor, latestGuaranteedPredecessor)
+//          if (newStable) helpStable(lks, current)
+//          if(txn.isTransitivePredecessor(current.txn) || tryRecordRelationship(current.txn, txn, current.txn, txn)) {
+//            NotFound(current, next)
+//          } else {
+//            val nlks = latestKnownStable.get
+//            traverse(nlks, nlks, newHead = false, newStable = false)
+//          }
 //        }
 //      } else {
-//        traverse(latestGuaranteedPredecessor, next)
+//        traverse(lks, next, newHead = false, newStable = false) // could be true, but we didn't check so we don't know
 //      }
 //    }
-//
-//    val lro = latestReevOut.get
-//    traverse(lro, lro)
+//    val nlks = latestKnownStable.get
+//    traverse(nlks, nlks, newHead = false, newStable = false)
 //  }
 //
-//  private def helpGC(start: Version, current: Version): Version = {
-//    if(head.compareAndSet(start, current)) {
-//      current.lastWrittenPredecessorIfStable.lastWrittenPredecessorIfStable = null
-//      current
-//    } else {
-//      head.get()
+//  @tailrec private def ensureVersionFraming(txn: T): Version = {
+//    findMaxUpToFraming(txn) match {
+//      case Found(v) => v
+//      case NotFound(pred, succ) =>
+//        val v = new Version(txn, new AtomicReference(succ), computeSuccessorWrittenPredecessorIfStable(pred), pred.out, pending = 0, changed = 0, value = None)
+//        if(pred.next.compareAndSet(succ, v)) {
+//          // TODO ensure correct stable and out
+//          v
+//        } else {
+//          ensureVersionFraming(txn)
+//        }
 //    }
+//  }
+//
+//  private def helpStable(lks: Version, current: Version): Unit = {
+//    assert(lks ne current, s"initial value for traversal should start with newStable false")
+//    latestKnownStable.compareAndSet(lks, current)
+//  }
+//
+//  private def helpGC(current: Version): Unit = {
+//    // TODO think about this
+//  }
+//  private def helpGC(lkh: Version, current: Version): Unit = {
+//    assert(lkh ne current, s"initial value for traversal should start with newHead false")
+//    if(head.compareAndSet(lkh, current)) current.lastWrittenPredecessorIfStable.lastWrittenPredecessorIfStable = null
 //  }
 //
 //  // TODO needs to be in a loop
@@ -319,9 +348,9 @@
 //    * @return the position (positive values) or insertion point (negative values)
 //    */
 //  private def getFramePositionFraming(txn: T, minPos: Int = DEFAULT_MIN_POS): Int = {
-//    assert(minPos == DEFAULT_MIN_POS || minPos > math.max(latestGChint, latestReevOut), s"nonsensical minpos $minPos <= max(latestGChint $latestGChint, latestReevOut $latestReevOut)")
+//    assert(minPos == DEFAULT_MIN_POS || minPos > math.max(latestGChint, latestKnownStable), s"nonsensical minpos $minPos <= max(latestGChint $latestGChint, latestReevOut $latestKnownStable)")
 //    val knownOrderedMinPosIsProvided = minPos != DEFAULT_MIN_POS
-//    val fromFinal = if (knownOrderedMinPosIsProvided) minPos else math.max(latestGChint, latestReevOut) + 1
+//    val fromFinal = if (knownOrderedMinPosIsProvided) minPos else math.max(latestGChint, latestKnownStable) + 1
 //    if(fromFinal == size) {
 //      ensureFromFinalRelationIsRecorded(size, txn, UnlockedUnknown).unlockedIfLocked()
 //      arrangeVersionArrayAndCreateVersion(size, txn)
@@ -370,7 +399,7 @@
 //  }
 //
 //  private def getFramePositionsFraming0(one: T, two: T): (Int, Int) = {
-//    val fromFinal = math.max(latestGChint, latestReevOut) + 1
+//    val fromFinal = math.max(latestGChint, latestKnownStable) + 1
 //    if(fromFinal == size) {
 //      // shortcut1: insertion at the end is the only possible solution
 //      ensureFromFinalRelationIsRecorded(size, one, UnlockedUnknown).unlockedIfLocked()
@@ -708,6 +737,8 @@
 //    }
 //  }
 //
+//  private def tryRecordRelationship(attemptPredecessor: T, succToRecord: T, defender: T, contender: T): Boolean = ??? // TODO
+//
 //  private def tryRecordRelationship(attemptPredecessor: T, predPos: Int, succToRecord: T, defender: T, contender: T, sccState: SCCState): (TryRecordResult, SCCState) = {
 //    //    @inline @tailrec def tryRecordRelationship0(sccState: SCCState): (TryRecordResult, SCCState) = {
 //    sccState match {
@@ -823,9 +854,9 @@
 //    * @return the position (positive values) or insertion point (negative values)
 //    */
 //  private def findFinalPosition/*Propagating*/(txn: T): Int = {
-//    if (_versions(latestReevOut).txn == txn) {
+//    if (_versions(latestKnownStable).txn == txn) {
 //      // common-case shortcut attempt: read latest completed reevaluation
-//      latestReevOut
+//      latestKnownStable
 //    } else {
 //      val res = findOrPigeonHolePropagatingPredictive(txn, latestGChint + 1, fromFinalPredecessorRelationIsRecorded = true, firstFrame, toFinalRelationIsRecorded = firstFrame == size, UnlockedUnknown /* minor TODO might be able to have KnownSame here? */)._1
 //      assert(res < 0 || _versions(res).isFinal, s"found version $res of $txn isn't final in $this")
@@ -1039,7 +1070,7 @@
 //    } else {
 //      assert((version.isFrame && version.isReadyForReevaluation) || (maybeValue.isEmpty && version.isReadOrDynamic), s"$turn cannot write changed=${maybeValue.isDefined} in $this")
 //      version.changed = 0
-//      latestReevOut = position
+//      latestKnownStable = position
 //      val stabilizeTo = if (maybeValue.isDefined) {
 //        latestValue = valuePersistency.unchange.unchange(maybeValue.get)
 //        version.value = maybeValue
@@ -1086,9 +1117,9 @@
 //    if(knownOrderedMinPos == size) {
 //      assert(txn.isTransitivePredecessor(_versions(knownOrderedMinPos - 1).txn) || _versions(knownOrderedMinPos - 1).txn.phase == TurnPhase.Completed, s"illegal $knownOrderedMinPos: predecessor ${_versions(knownOrderedMinPos - 1).txn} not ordered in $this")
 //      arrangeVersionArrayAndCreateVersion(size, txn)
-//    } else if (_versions(latestReevOut).txn == txn) {
+//    } else if (_versions(latestKnownStable).txn == txn) {
 //      lastGCcount = 0
-//      latestReevOut
+//      latestKnownStable
 //    } else {
 //      val (insertOrFound, _) = findOrPigeonHolePropagatingPredictive(txn, knownOrderedMinPos, fromFinalPredecessorRelationIsRecorded = true, size, toFinalRelationIsRecorded = true, UnlockedUnknown)
 //      if(insertOrFound < 0) {
@@ -1378,14 +1409,14 @@
 //    if (hintVersionIsWritten) {
 //      if(NodeVersionHistory.DEBUG_GC) println(s"[${Thread.currentThread().getName}] hint is written: dumping $latestGChint to offset 0")
 //      // if hint is written, just dump everything before
-//      latestReevOut -= latestGChint
+//      latestKnownStable -= latestGChint
 //      dumpToOffsetAndLeaveHoles(writeTo, latestGChint, 0, firstHole, secondHole)
 //      lastGCcount = latestGChint
 //    } else {
 //      // otherwise find the latest write before the hint, move it to index 0, and only dump everything else
 //      lastGCcount = latestGChint - 1
 //      writeTo(0) = _versions(latestGChint).lastWrittenPredecessorIfStable
-//      latestReevOut = if(latestReevOut <= latestGChint) 0 else latestReevOut - lastGCcount
+//      latestKnownStable = if(latestKnownStable <= latestGChint) 0 else latestKnownStable - lastGCcount
 //      dumpToOffsetAndLeaveHoles(writeTo, latestGChint, 1, firstHole, secondHole)
 //    }
 //    writeTo(0).lastWrittenPredecessorIfStable = null
