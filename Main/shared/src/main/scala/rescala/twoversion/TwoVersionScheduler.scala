@@ -28,7 +28,7 @@ trait TwoVersionScheduler[S <: TwoVersionStruct, TImpl <: TwoVersionPropagation[
     * - run the party! phase
     *   - not yet implemented
     * */
-  override private[rescala] def executeTurn[R](initialWrites: Set[ReSource], admissionPhase: (AdmissionTicket) => R) = {
+  override def executeTurn[R](initialWrites: Set[ReSource], admissionPhase: (AdmissionTicket) => R) = {
     val turn = makeTurn(_currentTurn.value)
 
     val result = try {

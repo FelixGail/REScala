@@ -42,7 +42,7 @@ object SimpleCreation extends Initializer[SimpleStruct] {
 object SimpleScheduler extends Scheduler[SimpleStruct] {
 
   var idle = true
-  override private[rescala] def executeTurn[R](initialWrites: Set[ReSource], admissionPhase: AdmissionTicket => R) = synchronized {
+  override def executeTurn[R](initialWrites: Set[ReSource], admissionPhase: AdmissionTicket => R) = synchronized {
     require(idle, "simple scheduler is not reentrant")
     idle = false
     try {

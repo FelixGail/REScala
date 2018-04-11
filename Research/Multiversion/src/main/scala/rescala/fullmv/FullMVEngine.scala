@@ -21,7 +21,7 @@ class FullMVEngine(val name: String) extends SchedulerImpl[FullMVStruct, FullMVT
 
   override private[rescala] def singleReadValueOnce[A](reactive: Signal[A]) = reactive.state.latestValue.get
 
-  override private[rescala] def executeTurn[R](declaredWrites: Set[ReSource], admissionPhase: (AdmissionTicket) => R): R = {
+  override def executeTurn[R](declaredWrites: Set[ReSource], admissionPhase: (AdmissionTicket) => R): R = {
     val turn = newTurn()
     withTurn(turn) {
       if (declaredWrites.nonEmpty) {
