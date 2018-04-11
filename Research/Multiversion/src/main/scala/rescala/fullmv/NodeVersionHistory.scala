@@ -133,6 +133,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     assert(!_versions.drop(size).exists(_ != null), debugStatement("non-null version outside bounds"))
     assert(_versions(0).isWritten, debugStatement("first version not written"))
     assert(!_versions.take(size).groupBy(_.txn).exists(_._2.length > 1), debugStatement("multiple versions for some transactions"))
+    assert(indexedVersions.size == size, debugStatement(s"index $indexedVersions wrong size ${indexedVersions.size}"))
 
     assert(firstFrame > 0, debugStatement("firstFrame out of bounds negative"))
     assert(firstFrame <= size, debugStatement("firstFrame out of bounds positive"))
@@ -1217,7 +1218,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     assert(create != 0 || (firstHole < 0 && secondHole < 0), s"holes $firstHole and $secondHole do not match 0 insertions")
     assert(create != 1 || (firstHole >= 0 && secondHole < 0), s"holes $firstHole and $secondHole do not match 1 insertions")
     assert(create != 2 || (firstHole >= 0 && secondHole >= 0), s"holes $firstHole and $secondHole do not match 2 insertions")
-    assert(secondHole < 0 || secondHole >= firstHole, s"second hole ${secondHole }must be behind or at first $firstHole")
+    assert(secondHole < 0 || secondHole >= firstHole, s"second hole $secondHole must be behind or at first $firstHole")
     if(firstHole == size && size + create <= _versions.length) {
       // if only versions should be added at the end (i.e., existing versions don't need to be moved) and there's enough room, just don't do anything
       lastGCcount = 0
@@ -1276,14 +1277,13 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
       if(NodeVersionHistory.DEBUG_GC) println(s"[${Thread.currentThread().getName}] hint is written: dumping $latestGChint to offset 0")
       // if hint is written, just dump everything before
       latestReevOut -= latestGChint
-      dumpToOffsetAndLeaveHoles(writeTo, latestGChint, 0, firstHole, secondHole)
+      dumpToOffsetAndLeaveHoles(writeTo, latestGChint, null, firstHole, secondHole)
       lastGCcount = latestGChint
     } else {
       // otherwise find the latest write before the hint, move it to index 0, and only dump everything else
       lastGCcount = latestGChint - 1
-      writeTo(0) = _versions(latestGChint).lastWrittenPredecessorIfStable
       latestReevOut = if(latestReevOut <= latestGChint) 0 else latestReevOut - lastGCcount
-      dumpToOffsetAndLeaveHoles(writeTo, latestGChint, 1, firstHole, secondHole)
+      dumpToOffsetAndLeaveHoles(writeTo, latestGChint, _versions(latestGChint).lastWrittenPredecessorIfStable, firstHole, secondHole)
     }
     writeTo(0).lastWrittenPredecessorIfStable = null
     val sizeBefore = size
@@ -1293,16 +1293,30 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     if ((_versions eq writeTo) && size + create < sizeBefore) java.util.Arrays.fill(_versions.asInstanceOf[Array[AnyRef]], size + create, sizeBefore, null)
   }
 
-  private def dumpToOffsetAndLeaveHoles(writeTo: Array[Version], retainFrom: Int, retainTo: Int, firstHole: Int, secondHole: Int): Unit = {
-    assert(retainFrom > retainTo, s"this method is either broken or pointless (depending on the number of inserts) if not at least one version is removed.")
+  private def dumpToOffsetAndLeaveHoles(writeTo: Array[Version], retainFrom: Int, retainOnZero: Version, firstHole: Int, secondHole: Int): Unit = {
     assert(firstHole >= 0 || secondHole < 0, "must not give only a second hole")
     assert(secondHole < 0 || secondHole >= firstHole, "second hole must be behind or at first")
+
+//    println(s"dumpToOffsetAndLeaveHoles($writeTo, $retainFrom, $retainOnZero, $firstHole, $secondHole) on $this:")
+    for(i <- 0 until retainFrom) {
+      val dump = _versions(i)
+      if(dump ne retainOnZero) {
+        val removed = indexedVersions.remove(dump.txn)
+        assert(removed eq dump, s"removal of $i from index $indexedVersions returned $removed instead of $dump in $this")
+//        println(s"removed $dump from index")
+      }
+    }
+
+    val retainTo = if(retainOnZero == null) {
+      0
+    } else {
+      writeTo(0) = retainOnZero
+      1
+    }
+
     // just dump everything before the hint
     if (firstHole < 0 || firstHole == size) {
       // no hole or holes at the end only: the entire array stays in one segment
-      for(i <- 0 until retainFrom) {
-        indexedVersions.remove(_versions(i))
-      }
       System.arraycopy(_versions, retainFrom, writeTo, retainTo, size - retainFrom)
     } else {
       // copy first segment
@@ -1317,6 +1331,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
         if((_versions ne writeTo) || gcOffset != 2) System.arraycopy(_versions, secondHole, writeTo, gcOffset + secondHole + 2, size - secondHole)
       }
     }
+//    println(s"dumpToOffsetAndLeaveHoles($writeTo, $retainFrom, $retainTo, $firstHole, $secondHole) result: $this")
   }
 }
 
