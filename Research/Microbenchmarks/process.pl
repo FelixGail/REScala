@@ -92,8 +92,9 @@ my $DBH = DBI->connect("dbi:SQLite:dbname=". $DBPATH,"","",{AutoCommit => 0,Prin
   chdir $OUTDIR;
 
   makeLegend();
-  miscBenchmarks();
+#  miscBenchmarks();
 #  restorationBenchmarks();
+  mvrpBenchmarks();
 
   $DBH->commit();
 }
@@ -121,8 +122,69 @@ sub restorationBenchmarks() {
   }
 }
 
-sub miscBenchmarks() {
+sub mvrpBenchmarks() {
+  # paper philosophers
+  for my $topper (queryChoices("Param: topper")) {
+    for my $dynamic (queryChoices("Param: dynamicity", "Param: topper" => $topper)) {
+      for my $philosophers (queryChoices("Param: philosophers", "Param: dynamicity" => $dynamic, "Param: topper" => $topper)) {
+        # local $YRANGE = "[0:500]" if $philosophers <= 64 && $dynamic eq "static";
+        # local $YRANGE = "[0:400]" if $philosophers <= 32 && $dynamic eq "static";
+        # local $YRANGE = "[0:800]" if $philosophers > 64 && $dynamic eq "static";
+        # local $YRANGE = "[0:300]" if $dynamic ne "static" && $philosophers <= 64;
+        local $YRANGE = "[0:150]" if $philosophers == 16 && $topper eq "none";
+        local $YRANGE_ROUND = 150 if $philosophers == 16 && $topper eq "none";
+        local $YTIC_COUNT = 3 if $philosophers == 16 && $topper eq "none";
+        local $YRANGE = "[0:400]" if $philosophers == 64 && $topper eq "none";
+        local $YRANGE_ROUND = 400 if $philosophers == 64 && $topper eq "none";
+        local $YRANGE = "[0:900]" if $philosophers == -4 && $topper eq "none";
+        local $YRANGE_ROUND = 900 if $philosophers == -4 && $topper eq "none";
+        plotBenchmarksFor("paperphilosophers-$topper", "$dynamic-$philosophers",
+          map { {Title => $_, "Param: engineName" => $_ , Benchmark => "benchmarks.philosophers.PaperPhilosopherCompetition.eatOnce",
+          "Param: philosophers" => $philosophers, "Param: dynamicity" => $dynamic, "Param: topper" => $topper } }
+            queryChoices("Param: engineName", "Param: topper" => $topper, "Param: dynamicity" => $dynamic, "Param: philosophers" => $philosophers));
+      }
+    }
+  }
+  
+  # topologies
+  for my $work (queryChoices("Param: work", Benchmark => "benchmarks.simple.ReverseFan.run")) {
+    plotBenchmarksFor("topologies", "reverseFan-work-$work",
+        (map {{Title => $_, "Param: engineName" => $_, "Param: work" => $work, Benchmark => "benchmarks.simple.ReverseFan.run" }}
+          queryChoices("Param: engineName", "Param: work" => $work, Benchmark => "benchmarks.simple.ReverseFan.run")),);
+  }
+  for my $work (queryChoices("Param: work", Benchmark => "benchmarks.simple.SignalMapGrid.run")) {
+    for my $width (queryChoices("Param: width", "Param: work" => $work, Benchmark => "benchmarks.simple.SignalMapGrid.run")) {
+      for my $depth (queryChoices("Param: depth", "Param: width" => $width, "Param: work" => $work, Benchmark => "benchmarks.simple.SignalMapGrid.run")) {
+        my $name = "grid-w-$width-d-$depth";
+        if($width == 0) {
+          if($depth == 0) {
+            $name = "singleSource";
+          } else {
+            $name = "singleSource-$depth";
+          }
+        } elsif ($width == 1) {
+          $name = "chain-$depth";
+        } elsif ($depth == 1) {
+          $name = "fan-$width";
+        }
+        plotBenchmarksFor("topologies", "$name-work-$work",
+            (map {{Title => $_, "Param: engineName" => $_, "Param: depth" => $depth, "Param: width" => $width, "Param: work" => $work, Benchmark => "benchmarks.simple.SignalMapGrid.run" }}
+              queryChoices("Param: engineName", "Param: depth" => $depth, "Param: width" => $width, "Param: work" => $work, Benchmark => "benchmarks.simple.SignalMapGrid.run")),);
+      }
+    }
+  }
 
+  { # universe
+    #local $YRANGE = "[5:24] reverse";
+    local $YRANGE_ROUND = 10;
+    $DBH->do(qq[UPDATE $TABLE SET Score = 60 / Score WHERE Benchmark = "UniverseCaseStudy"]);
+    plotBenchmarksFor("Universe", "Universe",
+      (map {{Title => $_, "Param: engineName" => $_ , Benchmark => "UniverseCaseStudy" }}
+          queryChoices("Param: engineName", Benchmark => "UniverseCaseStudy")));
+  }
+}
+
+sub miscBenchmarks() {
   for my $dynamic (queryChoices("Param: tableType")) {
     for my $philosophers (queryChoices("Param: philosophers", "Param: tableType" => $dynamic)) {
       #local $LEGEND_POS = "left top" if $philosophers == 48  || $philosophers == 16;
@@ -175,49 +237,6 @@ sub miscBenchmarks() {
       }
     }
 
-  }
-
-  for my $topper (queryChoices("Param: topper")) {
-    for my $dynamic (queryChoices("Param: dynamicity", "Param: topper" => $topper)) {
-      for my $philosophers (queryChoices("Param: philosophers", "Param: dynamicity" => $dynamic, "Param: topper" => $topper)) {
-        # local $YRANGE = "[0:500]" if $philosophers <= 64 && $dynamic eq "static";
-        # local $YRANGE = "[0:400]" if $philosophers <= 32 && $dynamic eq "static";
-        # local $YRANGE = "[0:800]" if $philosophers > 64 && $dynamic eq "static";
-        # local $YRANGE = "[0:300]" if $dynamic ne "static" && $philosophers <= 64;
-        local $YRANGE = "[0:150]" if $philosophers == 16 && $topper eq "none";
-        local $YRANGE_ROUND = 150 if $philosophers == 16 && $topper eq "none";
-		local $YTIC_COUNT = 3 if $philosophers == 16 && $topper eq "none";
-        local $YRANGE = "[0:400]" if $philosophers == 64 && $topper eq "none";
-        local $YRANGE_ROUND = 400 if $philosophers == 64 && $topper eq "none";
-        local $YRANGE = "[0:900]" if $philosophers == -4 && $topper eq "none";
-        local $YRANGE_ROUND = 900 if $philosophers == -4 && $topper eq "none";
-        plotBenchmarksFor("paperphilosophers-$topper", "$dynamic-$philosophers",
-          map { {Title => $_, "Param: engineName" => $_ , Benchmark => "benchmarks.philosophers.PaperPhilosopherCompetition.eatOnce",
-          "Param: philosophers" => $philosophers, "Param: dynamicity" => $dynamic, "Param: topper" => $topper } }
-            queryChoices("Param: engineName", "Param: topper" => $topper, "Param: dynamicity" => $dynamic, "Param: philosophers" => $philosophers));
-      }
-
-      my $byPhilosopher = sub($engine) {
-        my @choices = sort {$a <=> $b } queryChoices("Param: philosophers", "Param: topper" => $topper, "Param: engineName" => $engine, "Param: dynamicity" => $dynamic );
-        map { {Title => $engine . " " . $_, "Param: engineName" => $engine , Benchmark => "benchmarks.philosophers.PaperPhilosopherCompetition.eatOnce",
-          "Param: philosophers" => $_, "Param: dynamicity" => $dynamic, "Param: topper" => $topper } } (
-           @choices);
-      };
-      plotBenchmarksFor("paperphilosophers-$topper", "$dynamic comparison engine scaling",
-        map { $byPhilosopher->($_) } (queryChoices("Param: engineName", "Param: topper" => $topper, "Param: dynamicity" => $dynamic)));
-
-
-      plotBenchmarksFor("paperphilosophers-$topper", "$dynamic Philosopher Table",
-        map { {Title => $_, "Param: engineName" => $_ , Benchmark =>  "benchmarks.philosophers.PaperPhilosopherCompetition.eatOnce", "Param: dynamicity" => $dynamic, "Param: topper" => $topper } }  queryChoices("Param: engineName", "Param: topper" => $topper, "Param: dynamicity" => $dynamic));
-      
-
-      { # varying conflict potential
-        my $threads = 8;
-        my $query = queryDataset(query("Param: philosophers", "Benchmark", "Param: engineName", "Param: dynamicity", "Threads"));
-        plotDatasets("paperphilosophers-$topper", "${dynamic}-concurrency-scaling", {xlabel => "Philosophers"},
-          map { $query->(prettyName($_), "benchmarks.philosophers.PaperPhilosopherCompetition.eatOnce", $_, $dynamic, $threads) } queryChoices("Param: engineName", "Param: topper" => $topper, "Param: dynamicity" => $dynamic, "Threads" => $threads));
-      }
-    }
   }
 
   plotChoices("backoff", "dynamic", "Param: minBackoff", "Param: engineName" => "parrp" , Benchmark => "benchmarks.philosophers.PhilosopherCompetition.eat",
@@ -381,16 +400,6 @@ sub miscBenchmarks() {
         (map {{Title => $_, "Param: engineName" => $_ , Benchmark => $benchmark, "Param: size" => $rooms }}
           queryChoices("Param: engineName", Benchmark => $benchmark, "Param: size" => $rooms)),);
     }
-  }
-
-
-  {#universe
-    #local $YRANGE = "[5:24] reverse";
-    local $YRANGE_ROUND = 10;
-    $DBH->do(qq[UPDATE $TABLE SET Score = 60 / Score WHERE Benchmark = "UniverseCaseStudy"]);
-    plotBenchmarksFor("Universe", "Universe",
-      (map {{Title => $_, "Param: engineName" => $_ , Benchmark => "UniverseCaseStudy" }}
-          queryChoices("Param: engineName", Benchmark => "UniverseCaseStudy")));
   }
 }
 
