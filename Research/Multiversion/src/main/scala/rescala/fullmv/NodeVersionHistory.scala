@@ -837,7 +837,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
   }
 
   private def deframeResultAfterPreviousFirstFrameWasRemoved(txn: T, version: Version) = {
-    stabilizeForwardsUntilFrame(version)
+    stabilizeForwardsUntilFrame(version.lastWrittenPredecessorIfStable)
     if(firstFrame < size) {
       FramingBranchResult.DeframeReframe(version.out, txn, _versions(firstFrame).txn)
     } else {
