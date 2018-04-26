@@ -1,0 +1,102 @@
+package tests.rescala.fullmv
+
+import org.scalatest.FunSuite
+import rescala.fullmv.NotificationResultAction.NotificationOutAndSuccessorOperation.{FollowFraming, NoSuccessor}
+import rescala.fullmv.{FramingBranchResult, FullMVEngine, NotificationResultAction}
+import rescala.fullmv.tasks._
+
+class DeframeTest extends FunSuite {
+  test("deframe") {
+    val engine = new FullMVEngine("deframe-test")
+    import engine._
+
+    val dummy = Signal {-1}.asInstanceOf[Reactive]
+
+    val right = Signal {0}.asInstanceOf[Reactive]
+    val middle = Signal {1}.asInstanceOf[Reactive]
+    val top = Signal {2}.asInstanceOf[Reactive]
+
+    val turnLeftOne = engine.newTurn()
+    turnLeftOne.beginFraming()
+    assert(Framing(turnLeftOne, middle).doFraming() === FramingBranchResult.Frame(Set(), turnLeftOne))
+    assert(Framing(turnLeftOne, top).doFraming() === FramingBranchResult.Frame(Set(), turnLeftOne))
+    turnLeftOne.beginExecuting()
+    assert(Notification(turnLeftOne, middle, changed = true).deliverNotification() === NotificationResultAction.GlitchFreeReady)
+
+    val turnRightOne = engine.newTurn()
+    turnRightOne.beginFraming()
+    assert(Framing(turnRightOne, dummy).doFraming() === FramingBranchResult.Frame(Set(), turnRightOne))
+    val turnRightTwo = engine.newTurn()
+    turnRightTwo.beginFraming()
+    assert(Framing(turnRightTwo, dummy).doFraming() === FramingBranchResult.FramingBranchEnd)
+
+    assert(Framing(turnRightTwo, right).doFraming() === FramingBranchResult.Frame(Set(), turnRightTwo))
+    assert(Framing(turnRightTwo, middle).doFraming() === FramingBranchResult.FramingBranchEnd)
+
+    assert(Framing(turnRightOne, right).doFraming() === FramingBranchResult.FrameSupersede(Set(), turnRightOne, turnRightTwo))
+    turnLeftOne.drop(right, middle)
+
+    val reevMiddle = Reevaluation(turnLeftOne, middle)
+    assert(reevMiddle.processReevaluationResult(Some(123.asInstanceOf[reevMiddle.node.Value])) === FollowFraming(Set(), turnRightTwo))
+    assert(NotificationWithFollowFrame(turnLeftOne, top, changed = true, turnRightTwo).deliverNotification() === NotificationResultAction.GlitchFreeReady)
+
+    assert(SupersedeFraming(turnRightOne, middle, turnRightTwo).doFraming() === FramingBranchResult.Deframe(Set(), turnRightTwo))
+    assert(Deframing(turnRightTwo, top).doFraming() === FramingBranchResult.FramingBranchEnd)
+
+    val reevTop = Reevaluation(turnLeftOne, top)
+    assert(reevTop.processReevaluationResult(Some(234.asInstanceOf[reevTop.node.Value])) === NoSuccessor(Set()))
+
+    // TODO change version history to respect overtakes as potential frames
+    // TODO remove deframe actions
+    // TODO second to last check will change, but final result should stay the same.
+  }
+
+  test("deframe-reframe") {
+    val engine = new FullMVEngine("deframe-reframe-test")
+    import engine._
+
+    val dummy = Signal {-1}.asInstanceOf[Reactive]
+
+    val right = Signal {0}.asInstanceOf[Reactive]
+    val middle = Signal {1}.asInstanceOf[Reactive]
+    val top = Signal {2}.asInstanceOf[Reactive]
+
+    val turnLeftOne = engine.newTurn()
+    turnLeftOne.beginFraming()
+    assert(Framing(turnLeftOne, middle).doFraming() === FramingBranchResult.Frame(Set(), turnLeftOne))
+    assert(Framing(turnLeftOne, top).doFraming() === FramingBranchResult.Frame(Set(), turnLeftOne))
+    turnLeftOne.beginExecuting()
+    assert(Notification(turnLeftOne, middle, changed = true).deliverNotification() === NotificationResultAction.GlitchFreeReady)
+
+    val turnRightOne = engine.newTurn()
+    turnRightOne.beginFraming()
+    assert(Framing(turnRightOne, dummy).doFraming() === FramingBranchResult.Frame(Set(), turnRightOne))
+    val turnRightTwo = engine.newTurn()
+    turnRightTwo.beginFraming()
+    assert(Framing(turnRightTwo, dummy).doFraming() === FramingBranchResult.FramingBranchEnd)
+
+    assert(Framing(turnRightTwo, right).doFraming() === FramingBranchResult.Frame(Set(), turnRightTwo))
+    assert(Framing(turnRightTwo, middle).doFraming() === FramingBranchResult.FramingBranchEnd)
+
+    val turnLeftTwo = engine.newTurn()
+    turnLeftTwo.beginFraming()
+    assert(Framing(turnLeftTwo, middle).doFraming() === FramingBranchResult.FramingBranchEnd)
+
+    assert(Framing(turnRightOne, right).doFraming() === FramingBranchResult.FrameSupersede(Set(), turnRightOne, turnRightTwo))
+    turnLeftOne.drop(right, middle)
+
+    val reevMiddle = Reevaluation(turnLeftOne, middle)
+    assert(reevMiddle.processReevaluationResult(Some(123.asInstanceOf[reevMiddle.node.Value])) === FollowFraming(Set(), turnRightTwo))
+    assert(NotificationWithFollowFrame(turnLeftOne, top, changed = true, turnRightTwo).deliverNotification() === NotificationResultAction.GlitchFreeReady)
+
+    assert(SupersedeFraming(turnRightOne, middle, turnRightTwo).doFraming() === FramingBranchResult.DeframeReframe(Set(), turnRightTwo, turnLeftTwo))
+    assert(DeframeReframing(turnRightTwo, top, turnLeftTwo).doFraming() === FramingBranchResult.FramingBranchEnd)
+
+    val reevTop = Reevaluation(turnLeftOne, top)
+    assert(reevTop.processReevaluationResult(Some(234.asInstanceOf[reevTop.node.Value])) === FollowFraming(Set(), turnLeftTwo))
+
+    // TODO change version history to respect overtakes as potential frames
+    // TODO remove deframe actions
+    // TODO second to last check will change, but final result should stay the same.
+  }
+}

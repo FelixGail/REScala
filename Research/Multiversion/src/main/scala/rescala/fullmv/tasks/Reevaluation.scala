@@ -32,7 +32,8 @@ trait RegularReevaluationHandling extends ReevaluationHandling[Reactive[FullMVSt
     res.getDependencies().foreach(commitDependencyDiff(node, node.state.incomings))
     res.forValue(v => value = v)
     res.forEffect(_())
-    processReevaluationResult(if(res.propagate) Some(value) else None)
+    val res2 = processReevaluationResult(if(res.propagate) Some(value) else None)
+    processReevOutResult(res2, changed = res.propagate)
   }
 
   final def commitDependencyDiff(node: Reactive[FullMVStruct], current: Set[ReSource[FullMVStruct]])(updated: Set[ReSource[FullMVStruct]]): Unit = {
@@ -56,8 +57,12 @@ trait SourceReevaluationHandling extends ReevaluationHandling[ReSource[FullMVStr
     assert(turn.phase == TurnPhase.Executing, s"$turn cannot source-reevaluate (requires executing phase")
     val ic = turn.asInstanceOf[FullMVTurn].initialChanges(node)
     assert(ic.source eq node, s"$turn initial change map broken?")
-    if(!ic.writeValue(ic.source.state.latestValue, x => processReevaluationResult(Some(x.asInstanceOf[node.Value])))) {
-      processReevaluationResult(None)
+    if(!ic.writeValue(ic.source.state.latestValue, x => {
+      val res = processReevaluationResult(Some(x.asInstanceOf[node.Value]))
+      processReevOutResult(res, changed = true)
+    })) {
+      val res = processReevaluationResult(None)
+      processReevOutResult(res, changed = false)
     }
   }
 
@@ -69,7 +74,7 @@ trait ReevaluationHandling[N <: ReSource[FullMVStruct]] extends FullMVAction {
   def createReevaluation(succTxn: FullMVTurn): FullMVAction
   def doReevaluation(): Unit
 
-  def processReevaluationResult(maybeChange: Option[node.Value]): Unit = {
+  def processReevaluationResult(maybeChange: Option[node.Value]): ReevOutResult[FullMVTurn, Reactive[FullMVStruct]] = {
     val reevOutResult = node.state.reevOut(turn, maybeChange)
     if(FullMVEngine.DEBUG && maybeChange.isDefined && maybeChange.get.isInstanceOf[Pulse.Exceptional]){
       // could be a framework exception that is relevant to debugging, but was eaten by reactive's
@@ -81,7 +86,7 @@ trait ReevaluationHandling[N <: ReSource[FullMVStruct]] extends FullMVAction {
       }
       maybeChange.get.asInstanceOf[Pulse.Exceptional].throwable.printStackTrace()
     }
-    processReevOutResult(reevOutResult, changed = maybeChange.isDefined)
+    reevOutResult
   }
 
   def processReevOutResult(outAndSucc: ReevOutResult[FullMVTurn, Reactive[FullMVStruct]], changed: Boolean): Unit = {
