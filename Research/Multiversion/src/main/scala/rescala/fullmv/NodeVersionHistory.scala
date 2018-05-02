@@ -10,13 +10,15 @@ import scala.annotation.elidable.ASSERTION
 import scala.annotation.{elidable, tailrec}
 import scala.collection.mutable.ArrayBuffer
 
-sealed trait FramingBranchResult[+T, +R]
+sealed trait AlmostFramingBranchResult[+T, +R]
+object AlmostFramingBranchResult {
+  case object FirstFrameUnknown extends AlmostFramingBranchResult[Nothing, Nothing]
+}
+sealed trait FramingBranchResult[+T, +R] extends AlmostFramingBranchResult[T, R]
 object FramingBranchResult {
   case object FramingBranchEnd extends FramingBranchResult[Nothing, Nothing]
   case class Frame[T, R](out: Set[R], frame: T) extends FramingBranchResult[T, R]
   case class FrameSupersede[T, R](out: Set[R], frame: T, supersede: T) extends FramingBranchResult[T, R]
-  case class Deframe[T, R](out: Set[R], deframe: T) extends FramingBranchResult[T, R]
-  case class DeframeReframe[T, R](out: Set[R], deframe: T, reframe: T) extends FramingBranchResult[T, R]
 }
 
 sealed trait NotificationResultAction[+T, +R]
@@ -137,12 +139,14 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
 
     assert(firstFrame > 0, debugStatement("firstFrame out of bounds negative"))
     assert(firstFrame <= size, debugStatement("firstFrame out of bounds positive"))
-    assert(firstFrame == size || _versions(firstFrame).isFrame, debugStatement("firstFrame not frame"))
-    assert(!_versions.take(firstFrame).exists(_.isFrame), debugStatement("firstFrame not first"))
+    assert(firstFrame == size || _versions(firstFrame).isFrame || _versions(firstFrame).isOvertakeCompensation, debugStatement("firstFrame not frame"))
+    assert(!_versions.take(firstFrame).exists(v => v.isFrame || v.isOvertakeCompensation), debugStatement("firstFrame not first"))
 
     assert(latestReevOut >= 0, debugStatement("latest reevout out of bounds negative"))
     assert(latestReevOut < size, debugStatement("latestWritten out of bounds positive"))
     assert(_versions(latestReevOut).pending == 0 && _versions(latestReevOut).changed == 0 && (latestReevOut == 0 || _versions(latestReevOut).isStable), debugStatement("latestReevOut points to invalid version"))
+
+    assert(!_versions.exists(v => v != null && v.pending == 0 && v.changed < 0), debugStatement("there's a version with pending==0 but changed<0, figure out how this comes to be and refine any isOvertakeCompensation usages or equivalents!"))
 
     val actualVersions = _versions.take(size)
     val expectedPredecessorWrites: Array[Version] = new Array(actualVersions.length)
@@ -186,7 +190,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
   }
 
   private def computeSuccessorWrittenPredecessorIfStable(predVersion: Version) = {
-    if (predVersion.isFrame) {
+    if (predVersion.pending != 0 || predVersion.changed > 0) {
       null
     } else if (predVersion.isWritten) {
       predVersion
@@ -305,8 +309,8 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
   }
 
   private def getFramePositionPropagating(txn: T, minPos: Int = firstFrame): Int = {
-    assert(minPos >= firstFrame, s"nonsensical minpos $minPos < firstFrame $firstFrame")
-    assert(firstFrame < size, s"a propagating turn may not have a version when looking for a frame, but there must be *some* frame.")
+    assert(minPos >= firstFrame, s"nonsensical minpos $minPos < firstFrame in $this")
+    assert(firstFrame < size, s"propagating $txn may not have a version when looking for a frame, but there must be *some* frame in $this")
     if(minPos == size) {
       assert(txn.isTransitivePredecessor(_versions(minPos - 1).txn), s"knownOrderedMinPos $minPos for $txn: predecessor ${_versions(minPos - 1).txn} not ordered in $this")
       arrangeVersionArrayAndCreateVersion(minPos, txn)
@@ -748,81 +752,73 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     */
   def incrementSupersedeFrame(txn: T, supersede: T): FramingBranchResult[T, OutDep] = synchronized {
     val (position, supersedePos) = getFramePositionsFraming(txn, supersede)
-    val version = _versions(position)
-    version.pending += 1
-    val result = if(position < firstFrame && _versions(position).pending == 1) {
-      _versions(supersedePos).pending -= 1
-      incrementFrameResultAfterNewFirstFrameWasCreated(txn, position)
-    } else {
-      decrementFrame0(supersede, supersedePos)
-    }
+    _versions(supersedePos).pending -= 1
+    val result = incrementFrame0(txn, position)
     assertOptimizationsIntegrity(s"incrementSupersedeFrame($txn, $supersede) -> $result")
-    result
-  }
-
-  def decrementFrame(txn: T): FramingBranchResult[T, OutDep] = synchronized {
-    val result = decrementFrame0(txn, getFramePositionFraming(txn))
-    assertOptimizationsIntegrity(s"decrementFrame($txn) -> $result")
-    result
-  }
-
-  def decrementReframe(txn: T, reframe: T): FramingBranchResult[T, OutDep] = synchronized {
-    val (position, reframePos) = getFramePositionsFraming(txn, reframe)
-    val version = _versions(position)
-    version.pending += -1
-    val result = if(position == firstFrame && version.pending == 0) {
-      _versions(reframePos).pending += 1
-      deframeResultAfterPreviousFirstFrameWasRemoved(txn, version)
-    } else {
-      incrementFrame0(reframe, reframePos)
-    }
-    assertOptimizationsIntegrity(s"deframeReframe($txn, $reframe) -> $result")
     result
   }
 
   private def incrementFrame0(txn: T, position: Int): FramingBranchResult[T, OutDep] = {
     val version = _versions(position)
     version.pending += 1
-    if (position < firstFrame && version.pending == 1) {
-      incrementFrameResultAfterNewFirstFrameWasCreated(txn, position)
-    } else {
+    if(position == firstFrame) {
+      assert(version.pending != 1, s"previously not a frame $version was already pointed to as firstFrame in $this")
+      if(version.pending == 0) {
+        // if first frame was removed (i.e., overtake compensation was resolved -- these cases mirror progressToNextWriteForNotification)
+        val maybeNewFirstFrame = stabilizeForwardsUntilFrame(version.lastWrittenPredecessorIfStable)
+        if (maybeNewFirstFrame != null) {
+          if(maybeNewFirstFrame.pending < 0) {
+            FramingBranchResult.FramingBranchEnd
+          } else {
+            FramingBranchResult.Frame(maybeNewFirstFrame.out, maybeNewFirstFrame.txn)
+          }
+        } else {
+          FramingBranchResult.FramingBranchEnd
+        }
+      } else {
+        // just incremented an already existing and propagated frame
+        FramingBranchResult.FramingBranchEnd
+      }
+    } else if(position < firstFrame) {
+      // created a new frame
+      assert(version.pending == 1, s"found overtake or frame compensation $version before firstFrame in $this")
+      val maybeSupersede = if(firstFrame < size) {
+        val pffv = _versions(firstFrame)
+        if(pffv.pending >= 0) {
+          // technically .isFrame, i.e., > 0, but pffv may have been superseded from 1 to 0 before this call.
+          pffv.txn
+        } else {
+          // pffv is overtake
+          null.asInstanceOf[T]
+        }
+      } else {
+        null.asInstanceOf[T]
+      }
+      destabilizeBackwardsUntil(position)
+      assert(_versions(firstFrame) == version, s"destabilize stopped at different firstFrame than $version in $this")
+      if(maybeSupersede == null) {
+        FramingBranchResult.Frame(version.out, txn)
+      } else {
+        FramingBranchResult.FrameSupersede(version.out, txn, maybeSupersede)
+      }
+    } else /* if(position > firstFrame)*/  {
+      // created or incremented a non-first frame
       FramingBranchResult.FramingBranchEnd
     }
   }
 
-  private def decrementFrame0(txn: T, position: Int): FramingBranchResult[T, OutDep] = {
-    val version = _versions(position)
-    version.pending -= 1
-    if (position == firstFrame && version.pending == 0) {
-      deframeResultAfterPreviousFirstFrameWasRemoved(txn, version)
-    } else {
-      FramingBranchResult.FramingBranchEnd
-    }
-  }
 
-  @tailrec private def destabilizeBackwardsUntilFrame(): Unit = {
+  @tailrec private def destabilizeBackwardsUntil(pos: Int): Unit = {
     if(firstFrame < size) {
-      val version = _versions(firstFrame)
-      assert(version.isStable, s"cannot destabilize $firstFrame: $version")
-      version.lastWrittenPredecessorIfStable = null
+      val destabilize = _versions(firstFrame)
+      assert(destabilize.isStable, s"cannot destabilize $firstFrame: $destabilize")
+      destabilize.lastWrittenPredecessorIfStable = null
     }
     firstFrame -= 1
-    if(!_versions(firstFrame).isFrame) destabilizeBackwardsUntilFrame()
+    if(pos < firstFrame) destabilizeBackwardsUntil(pos)
   }
 
-  private def incrementFrameResultAfterNewFirstFrameWasCreated(txn: T, position: Int) = {
-    val previousFirstFrame = firstFrame
-    destabilizeBackwardsUntilFrame()
-    assert(firstFrame == position, s"destablizeBackwards did not reach $position: ${_versions(position)} but stopped at $firstFrame: ${_versions(firstFrame)}")
-
-    if(previousFirstFrame < size) {
-      FramingBranchResult.FrameSupersede(_versions(position).out, txn, _versions(previousFirstFrame).txn)
-    } else {
-      FramingBranchResult.Frame(_versions(position).out, txn)
-    }
-  }
-
-  @tailrec private def stabilizeForwardsUntilFrame(stabilizeTo: Version): Unit = {
+  @tailrec private def stabilizeForwardsUntilFrame(stabilizeTo: Version): Version = {
     firstFrame += 1
     if (firstFrame < size) {
       val stabilized = _versions(firstFrame)
@@ -832,16 +828,18 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
         if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] unparking ${stabilized.txn.userlandThread.getName} after stabilized $stabilized.")
         LockSupport.unpark(stabilized.txn.userlandThread)
       }
-      if (!stabilized.isFrame) stabilizeForwardsUntilFrame(stabilizeTo)
-    }
-  }
-
-  private def deframeResultAfterPreviousFirstFrameWasRemoved(txn: T, version: Version) = {
-    stabilizeForwardsUntilFrame(version.lastWrittenPredecessorIfStable)
-    if(firstFrame < size) {
-      FramingBranchResult.DeframeReframe(version.out, txn, _versions(firstFrame).txn)
+      if (stabilized.pending == 0) {
+        assert(stabilized.changed >= 0, s"stablizeTo ran up to $stabilized with negative change in $this")
+        if (stabilized.changed == 0) {
+          stabilizeForwardsUntilFrame(stabilizeTo)
+        } else {
+          stabilized
+        }
+      } else {
+        stabilized
+      }
     } else {
-      FramingBranchResult.Deframe(version.out, txn)
+      null
     }
   }
 
@@ -950,13 +948,19 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * @return the notification and next reevaluation descriptor.
     */
   private def progressToNextWriteForNotification(finalizedVersion: Version, stabilizeTo: Version): NotificationResultAction.NotificationOutAndSuccessorOperation[T, OutDep] = {
-    stabilizeForwardsUntilFrame(stabilizeTo)
-    val res = if(firstFrame < size) {
-      val newFirstFrame = _versions(firstFrame)
-      if(newFirstFrame.isReadyForReevaluation) {
-        NotificationResultAction.NotificationOutAndSuccessorOperation.NextReevaluation(finalizedVersion.out, newFirstFrame.txn)
-      } else {
-        NotificationResultAction.NotificationOutAndSuccessorOperation.FollowFraming(finalizedVersion.out, newFirstFrame.txn)
+    val maybeNewFirstFrame = stabilizeForwardsUntilFrame(stabilizeTo)
+    val res = if(maybeNewFirstFrame != null) {
+      if(maybeNewFirstFrame.pending == 0) {
+        assert(maybeNewFirstFrame.changed != 0, s"stabilize stopped at marker $maybeNewFirstFrame in $this")
+        if(maybeNewFirstFrame.changed > 0) {
+          NotificationResultAction.NotificationOutAndSuccessorOperation.NextReevaluation(finalizedVersion.out, maybeNewFirstFrame.txn)
+        } else /* if(maybeNewFirstFrame.changed < 0) */ {
+          throw new AssertionError("need figure out how to handle this case if we find that it can occur, assuming for now it cannot...")
+        }
+      } else if(maybeNewFirstFrame.pending > 0) {
+        NotificationResultAction.NotificationOutAndSuccessorOperation.FollowFraming(finalizedVersion.out, maybeNewFirstFrame.txn)
+      } else /* if(maybeNewFirstFrame.pending < 0) */ {
+        NotificationResultAction.NotificationOutAndSuccessorOperation.NoSuccessor(finalizedVersion.out)
       }
     } else {
       NotificationResultAction.NotificationOutAndSuccessorOperation.NoSuccessor(finalizedVersion.out)
@@ -1133,15 +1137,20 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     val sizePrediction = math.max(firstFrame - position, 0)
     val successorWrittenVersions = new ArrayBuffer[T](sizePrediction)
     var maybeSuccessorFrame: Option[T] = None
+    var stillCollecting = true
     for(pos <- position until size) {
       val version = _versions(pos)
       if(arity < 0) version.out -= delta else version.out += delta
       // as per above, this is implied false if pos >= firstFrame:
-      if(maybeSuccessorFrame.isEmpty) {
+      if(stillCollecting) {
         if(version.isWritten){
           successorWrittenVersions += version.txn
         } else if (version.isFrame) {
           maybeSuccessorFrame = Some(version.txn)
+          stillCollecting = false
+        } else if (version.isOvertakeCompensation) {
+          // something related to this case is probably not fully implemented correctly yet; such a test case wasn't priority yet.
+          stillCollecting
         }
       }
     }

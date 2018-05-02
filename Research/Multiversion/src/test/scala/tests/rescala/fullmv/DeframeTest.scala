@@ -40,18 +40,17 @@ class DeframeTest extends FunSuite {
     turnLeftOne.drop(right, middle)
 
     val reevMiddle = Reevaluation(turnLeftOne, middle)
-    assert(reevMiddle.processReevaluationResult(Some(123.asInstanceOf[reevMiddle.node.Value])) === FollowFraming(Set(top), turnRightTwo))
-    assert(NotificationWithFollowFrame(turnLeftOne, top, changed = true, turnRightTwo).deliverNotification() === NotificationResultAction.GlitchFreeReady)
+    assert(reevMiddle.processReevaluationResult(Some(123.asInstanceOf[reevMiddle.node.Value])) === NoSuccessor(Set(top)))
+//    assert(reevMiddle.processReevaluationResult(Some(123.asInstanceOf[reevMiddle.node.Value])) === FollowFraming(Set(top), turnRightTwo))
+    assert(Notification(turnLeftOne, top, changed = true).deliverNotification() === NotificationResultAction.GlitchFreeReady)
+//    assert(NotificationWithFollowFrame(turnLeftOne, top, changed = true, turnRightTwo).deliverNotification() === NotificationResultAction.GlitchFreeReady)
 
-    assert(SupersedeFraming(turnRightOne, middle, turnRightTwo).doFraming() === FramingBranchResult.Deframe(Set(top), turnRightTwo))
-    assert(Deframing(turnRightTwo, top).doFraming() === FramingBranchResult.FramingBranchEnd)
+    assert(SupersedeFraming(turnRightOne, middle, turnRightTwo).doFraming() === FramingBranchResult.FramingBranchEnd)
+//    assert(SupersedeFraming(turnRightOne, middle, turnRightTwo).doFraming() === FramingBranchResult.Deframe(Set(top), turnRightTwo))
+//    assert(Deframing(turnRightTwo, top).doFraming() === FramingBranchResult.FramingBranchEnd)
 
     val reevTop = Reevaluation(turnLeftOne, top)
     assert(reevTop.processReevaluationResult(Some(234.asInstanceOf[reevTop.node.Value])) === NoSuccessor(Set()))
-
-    // TODO change version history to respect overtakes as potential frames
-    // TODO remove deframe actions
-    // TODO second to last check will change, but final result should stay the same.
   }
 
   test("deframe-reframe") {
@@ -92,17 +91,17 @@ class DeframeTest extends FunSuite {
     turnLeftOne.drop(right, middle)
 
     val reevMiddle = Reevaluation(turnLeftOne, middle)
-    assert(reevMiddle.processReevaluationResult(Some(123.asInstanceOf[reevMiddle.node.Value])) === FollowFraming(Set(top), turnRightTwo))
-    assert(NotificationWithFollowFrame(turnLeftOne, top, changed = true, turnRightTwo).deliverNotification() === NotificationResultAction.GlitchFreeReady)
+    assert(reevMiddle.processReevaluationResult(Some(123.asInstanceOf[reevMiddle.node.Value])) === NoSuccessor(Set(top)))
+//    assert(reevMiddle.processReevaluationResult(Some(123.asInstanceOf[reevMiddle.node.Value])) === FollowFraming(Set(top), turnRightTwo))
+    assert(Notification(turnLeftOne, top, changed = true).deliverNotification() === NotificationResultAction.GlitchFreeReady)
+//    assert(NotificationWithFollowFrame(turnLeftOne, top, changed = true, turnRightTwo).deliverNotification() === NotificationResultAction.GlitchFreeReady)
 
-    assert(SupersedeFraming(turnRightOne, middle, turnRightTwo).doFraming() === FramingBranchResult.DeframeReframe(Set(top), turnRightTwo, turnLeftTwo))
-    assert(DeframeReframing(turnRightTwo, top, turnLeftTwo).doFraming() === FramingBranchResult.FramingBranchEnd)
+    assert(SupersedeFraming(turnRightOne, middle, turnRightTwo).doFraming() === FramingBranchResult.Frame(Set(top), turnLeftTwo))
+//    assert(SupersedeFraming(turnRightOne, middle, turnRightTwo).doFraming() === FramingBranchResult.DeframeReframe(Set(top), turnRightTwo, turnLeftTwo))
+    assert(Framing(turnLeftTwo, top).doFraming() === FramingBranchResult.FramingBranchEnd)
+//    assert(DeframeReframing(turnRightTwo, top, turnLeftTwo).doFraming() === FramingBranchResult.FramingBranchEnd)
 
     val reevTop = Reevaluation(turnLeftOne, top)
     assert(reevTop.processReevaluationResult(Some(234.asInstanceOf[reevTop.node.Value])) === FollowFraming(Set(), turnLeftTwo))
-
-    // TODO change version history to respect overtakes as potential frames
-    // TODO remove deframe actions
-    // TODO second to last check will change, but final result should stay the same.
   }
 }

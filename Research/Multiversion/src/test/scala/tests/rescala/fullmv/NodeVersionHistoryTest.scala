@@ -1,9 +1,9 @@
 package tests.rescala.fullmv
 
 import org.scalatest.FunSuite
-import rescala.core.{Pulse, Initializer}
-import rescala.fullmv.FramingBranchResult.{Deframe, Frame, FramingBranchEnd}
-import rescala.fullmv.NotificationResultAction.NotificationOutAndSuccessorOperation.FollowFraming
+import rescala.core.{Initializer, Pulse}
+import rescala.fullmv.FramingBranchResult.{Frame, FramingBranchEnd}
+import rescala.fullmv.NotificationResultAction.NotificationOutAndSuccessorOperation.{FollowFraming, NoSuccessor}
 import rescala.fullmv._
 
 class NodeVersionHistoryTest extends FunSuite {
@@ -35,8 +35,10 @@ class NodeVersionHistoryTest extends FunSuite {
 
     n.notify(reevaluate, changed = true)
     n.retrofitSinkFrames(Seq.empty, Some(framing1), -1)
-    assert(n.reevOut(reevaluate, Some(Pulse.Value(11))) === FollowFraming(Set.empty, framing2))
+    assert(n.reevOut(reevaluate, Some(Pulse.Value(11))) === NoSuccessor(Set.empty))
+//    assert(n.reevOut(reevaluate, Some(Pulse.Value(11))) === FollowFraming(Set.empty, framing2))
 
-    assert(n.incrementSupersedeFrame(framing1, framing2) === Deframe(Set.empty, framing2))
+    assert(n.incrementSupersedeFrame(framing1, framing2) === FramingBranchEnd)
+//    assert(n.incrementSupersedeFrame(framing1, framing2) === Deframe(Set.empty, framing2))
   }
 }
