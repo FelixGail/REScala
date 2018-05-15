@@ -54,7 +54,7 @@ object NotificationResultAction {
   * @tparam OutDep the type of outgoing dependency nodes
   */
 class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePersistency: InitValues[V]) {
-  class Version(val txn: T, @volatile var lastWrittenPredecessorIfStable: Version, var out: Set[OutDep], var pending: Int, var changed: Int, @volatile var value: Option[V]) /*extends MyManagedBlocker*/ {
+  class Version(val txn: T, @volatile var lastWrittenPredecessorIfStable: Version, var pending: Int, var changed: Int, @volatile var value: Option[V]) /*extends MyManagedBlocker*/ {
     // txn >= Executing, stable == true, node reevaluation completed changed
     def isWritten: Boolean = changed == 0 && value.isDefined
     // txn <= WrapUp, any following versions are stable == false
@@ -170,17 +170,18 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
 
   val indexedVersions = new ConcurrentHashMap[T, Version]()
   var _versions = new Array[Version](11)
-  _versions(0) = new Version(init, lastWrittenPredecessorIfStable = null, out = Set(), pending = 0, changed = 0, Some(valuePersistency.initialValue))
+  _versions(0) = new Version(init, lastWrittenPredecessorIfStable = null, pending = 0, changed = 0, Some(valuePersistency.initialValue))
   indexedVersions.put(init, _versions(0))
   var size = 1
   var latestValue: V = valuePersistency.initialValue
   var incomings: Set[InDep] = Set.empty
+  var out: Set[OutDep] = Set.empty
 
   private def createVersionInHole(position: Int, txn: T) = {
     assert(position > 0, s"must not create version at $position <= 0")
     val predVersion = _versions(position - 1)
     val lastWrittenPredecessorIfStable = computeSuccessorWrittenPredecessorIfStable(predVersion)
-    val version = new Version(txn, lastWrittenPredecessorIfStable, predVersion.out, pending = 0, changed = 0, None)
+    val version = new Version(txn, lastWrittenPredecessorIfStable, pending = 0, changed = 0, None)
     indexedVersions.put(txn, version)
     size += 1
     _versions(position) = version
@@ -770,7 +771,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
           if(maybeNewFirstFrame.pending < 0) {
             FramingBranchResult.FramingBranchEnd
           } else {
-            FramingBranchResult.Frame(maybeNewFirstFrame.out, maybeNewFirstFrame.txn)
+            FramingBranchResult.Frame(out, maybeNewFirstFrame.txn)
           }
         } else {
           FramingBranchResult.FramingBranchEnd
@@ -797,9 +798,9 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
       destabilizeBackwardsUntil(position)
       assert(_versions(firstFrame) == version, s"destabilize stopped at different firstFrame than $version in $this")
       if(maybeSupersede == null) {
-        FramingBranchResult.Frame(version.out, txn)
+        FramingBranchResult.Frame(out, txn)
       } else {
-        FramingBranchResult.FrameSupersede(version.out, txn, maybeSupersede)
+        FramingBranchResult.FrameSupersede(out, txn, maybeSupersede)
       }
     } else /* if(position > firstFrame)*/  {
       // created or incremented a non-first frame
@@ -953,17 +954,17 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
       if(maybeNewFirstFrame.pending == 0) {
         assert(maybeNewFirstFrame.changed != 0, s"stabilize stopped at marker $maybeNewFirstFrame in $this")
         if(maybeNewFirstFrame.changed > 0) {
-          NotificationResultAction.NotificationOutAndSuccessorOperation.NextReevaluation(finalizedVersion.out, maybeNewFirstFrame.txn)
+          NotificationResultAction.NotificationOutAndSuccessorOperation.NextReevaluation(out, maybeNewFirstFrame.txn)
         } else /* if(maybeNewFirstFrame.changed < 0) */ {
           throw new AssertionError("need figure out how to handle this case if we find that it can occur, assuming for now it cannot...")
         }
       } else if(maybeNewFirstFrame.pending > 0) {
-        NotificationResultAction.NotificationOutAndSuccessorOperation.FollowFraming(finalizedVersion.out, maybeNewFirstFrame.txn)
+        NotificationResultAction.NotificationOutAndSuccessorOperation.FollowFraming(out, maybeNewFirstFrame.txn)
       } else /* if(maybeNewFirstFrame.pending < 0) */ {
-        NotificationResultAction.NotificationOutAndSuccessorOperation.NoSuccessor(finalizedVersion.out)
+        NotificationResultAction.NotificationOutAndSuccessorOperation.NoSuccessor(out)
       }
     } else {
-      NotificationResultAction.NotificationOutAndSuccessorOperation.NoSuccessor(finalizedVersion.out)
+      NotificationResultAction.NotificationOutAndSuccessorOperation.NoSuccessor(out)
     }
     res
   }
@@ -1075,8 +1076,9 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     */
   def discover(txn: T, add: OutDep): (Seq[T], Option[T]) = synchronized {
     val position = ensureReadVersion(txn)
-    assert(!_versions(position).out.contains(add), "must not discover an already existing edge!")
-    retrofitSourceOuts(position, add, +1)
+    assert(!out.contains(add), "must not discover an already existing edge!")
+    out += add
+    retrofitSourceOuts(position)
   }
 
   /**
@@ -1086,8 +1088,9 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     */
   def drop(txn: T, remove: OutDep): (Seq[T], Option[T]) = synchronized {
     val position = ensureReadVersion(txn)
-    assert(_versions(position).out.contains(remove), "must not drop a non-existing edge!")
-    retrofitSourceOuts(position, remove, -1)
+    assert(out.contains(remove), "must not drop a non-existing edge!")
+    out -= remove
+    retrofitSourceOuts(position)
   }
 
   /**
@@ -1125,13 +1128,10 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     * rewrites all affected [[Version.out]] of the source this during drop(this, delta) with arity -1 or
     * discover(this, delta) with arity +1, and collects transactions for retrofitting frames on the sink node
     * @param position the executing transaction's version's position
-    * @param delta the outgoing dependency to add/remove
-    * @param arity +1 to add, -1 to remove delta to each [[Version.out]]
     * @return a list of transactions with written successor versions and maybe the transaction of the first successor
     *         frame if it exists, for which reframings have to be performed at the sink.
     */
-  private def retrofitSourceOuts(position: Int, delta: OutDep, arity: Int): (Seq[T], Option[T]) = {
-    require(math.abs(arity) == 1)
+  private def retrofitSourceOuts(position: Int): (Seq[T], Option[T]) = {
     // allocate array to the maximum number of written versions that might follow
     // (any version at index firstFrame or later can only be a frame, not written)
     val sizePrediction = math.max(firstFrame - position, 0)
@@ -1140,7 +1140,6 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     var stillCollecting = true
     for(pos <- position until size) {
       val version = _versions(pos)
-      if(arity < 0) version.out -= delta else version.out += delta
       // as per above, this is implied false if pos >= firstFrame:
       if(stillCollecting) {
         if(version.isWritten){
@@ -1155,7 +1154,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
       }
     }
     if(successorWrittenVersions.size > sizePrediction) System.err.println(s"FullMV retrofitSourceOuts predicted size max($firstFrame - $position, 0) = $sizePrediction, but size eventually was ${successorWrittenVersions.size}")
-    assertOptimizationsIntegrity(s"retrofitSourceOuts(from=$position, outdiff=$arity $delta) -> (writes=$successorWrittenVersions, maybeFrame=$maybeSuccessorFrame)")
+    assertOptimizationsIntegrity(s"retrofitSourceOuts(from=$position) -> (writes=$successorWrittenVersions, maybeFrame=$maybeSuccessorFrame)")
     (successorWrittenVersions, maybeSuccessorFrame)
   }
 
@@ -1196,12 +1195,11 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
     val second = insertTwo - lastGCcount + 1
     if(first == size) {
       val predVersion = _versions(size - 1)
-      val out = predVersion.out
       val lastWrittenPredecessorIfStable = computeSuccessorWrittenPredecessorIfStable(predVersion)
-      val v1 = new Version(one, lastWrittenPredecessorIfStable, out, pending = 0, changed = 0, value = None)
+      val v1 = new Version(one, lastWrittenPredecessorIfStable, pending = 0, changed = 0, value = None)
       _versions(first) = v1
       indexedVersions.put(one, v1)
-      val v2 = new Version(two, lastWrittenPredecessorIfStable, out, pending = 0, changed = 0, value = None)
+      val v2 = new Version(two, lastWrittenPredecessorIfStable, pending = 0, changed = 0, value = None)
       _versions(second) = v2
       indexedVersions.put(two, v2)
       if(lastWrittenPredecessorIfStable != null) firstFrame += 2
