@@ -21,7 +21,7 @@
 //  * @tparam OutDep the type of outgoing dependency nodes
 //  */
 //class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePersistency: InitValues[V]) {
-//  class Version(val txn: T, val next: AtomicReference[Version], @volatile var lastWrittenPredecessorIfStable: Version, var out: Set[OutDep], var pending: Int, var changed: Int, @volatile var value: Option[V]) /*extends MyManagedBlocker*/ {
+//  class Version(val txn: T, val next: AtomicReference[Version], val lastWrittenPredecessorIfStable: AtomicReference[Version], var pending: Int, var changed: Int, @volatile var value: Option[V]) /*extends MyManagedBlocker*/ {
 //    // txn >= Executing, stable == true, node reevaluation completed changed
 //    def isWritten: Boolean = changed == 0 && value.isDefined
 //    // txn <= WrapUp, any following versions are stable == false
@@ -68,85 +68,101 @@
 //
 //    override def toString: String = {
 //      if(isWritten){
-//        s"Written($txn, out=$out, v=${value.get})"
+//        s"Written($txn, v=${value.get})"
 //      } else if (isReadOrDynamic) {
-//        (if(isStable) "Stable" else "Unstable") + s"Marker($txn, out=$out)"
+//        (if(isStable) "Stable" else "Unstable") + s"Marker($txn)"
 //      } else if (isOvertakeCompensation) {
-//        s"OvertakeCompensation($txn, ${if (isStable) "stable" else "unstable"}, out=$out, pending=$pending, changed=$changed)"
+//        s"OvertakeCompensation($txn, ${if (isStable) "stable" else "unstable"}, pending=$pending, changed=$changed)"
 //      } else if(isFrame) {
 //        if(isStable) {
 //          if(isReadyForReevaluation) {
-//            s"Active($txn, out=$out)"
+//            s"Active($txn)"
 //          } else {
-//            s"FirstFrame($txn, out=$out, pending=$pending, changed=$changed)"
+//            s"FirstFrame($txn, pending=$pending, changed=$changed)"
 //          }
 //        } else {
 //          if(isReadyForReevaluation) {
-//            s"Queued($txn, out=$out)"
+//            s"Queued($txn)"
 //          } else {
-//            s"Frame($txn, out=$out, pending=$pending, changed=$changed)"
+//            s"Frame($txn, pending=$pending, changed=$changed)"
 //          }
 //        }
 //      } else {
-//        "UnknownVersionCase!(" + txn + ", " + (if(isStable) "stable" else "unstable") + ", out=" + out + ", pending=" + pending + ", changed=" + changed + ", value = " + value + ")"
+//        "UnknownVersionCase!(" + txn + ", " + (if(isStable) "stable" else "unstable") + ", pending=" + pending + ", changed=" + changed + ", value = " + value + ")"
 //      }
 //    }
 //  }
 //
 //  // =================== STORAGE ====================
 //
-//  val head = new AtomicReference(new Version(init, new AtomicReference(null), lastWrittenPredecessorIfStable = null, out = Set(), pending = 0, changed = 0, Some(valuePersistency.initialValue)))
-//  val firstFrame = new AtomicReference[Version](null)
-//  val tail = new AtomicReference(head.get)
-////  val latestKnownStable = new AtomicReference(head.get)
+//  val latestStable = new AtomicReference(new Version(init, new AtomicReference(null), lastWrittenPredecessorIfStable = null, pending = 0, changed = 0, Some(valuePersistency.initialValue)))
+//  var firstFrame = null.asInstanceOf[Version]
+//  val laggingTail = new AtomicReference(latestStable.get)
+//  var laggingGC = latestStable.get
 //
-//  var latestValue: V = valuePersistency.initialValue
+//  var latestValue: V = latestStable.get.read
 //  var incomings: Set[InDep] = Set.empty
+//  var outgoings: Set[OutDep] = Set.empty
 //
 //  sealed trait FindMaxResult
 //  case class Found(version: Version) extends FindMaxResult
 //  case class NotFound(orderedBefore: Version, orderedAfter: Version) extends FindMaxResult
 //
 //  // =================== FRAMING SEARCH AND INSERT ===================== //
-//  @tailrec private def findMaxUpToFraming(lkh: Version, txn: T, current: Version, newHead: Boolean): FindMaxResult = {
-//    val next = current.next.get
-//    if(next.txn == txn) {
-//      if(newHead) helpGC(lkh, current)
-//      Found(next)
-//    } else if (next == null || next.txn.isTransitivePredecessor(txn)) {
-//      if(newHead){
-//        helpGC(lkh, current)
-//        NotFound(current, next)
-//      } else {
-//        if(txn.isTransitivePredecessor(current.txn) || tryRecordRelationship(current.txn, txn, current.txn, txn)) {
-//          NotFound(current, next)
-//        } else {
-//          // reverse relation was recorded
-//          val lkh = head.get()
-//          findMaxUpToFraming(lkh, txn, lkh, newHead = false)
-//        }
-//      }
-//    } else next.txn.phase match {
-//      case TurnPhase.Completed =>
-//        findMaxUpToFraming(lkh, txn, next, newHead = true)
-//      case TurnPhase.Executing =>
-//        if(newHead) helpGC(lkh, current)
-//        findMaxUpToFraming(lkh, txn, next, newHead = false)
-//      case TurnPhase.Framing =>
-//        if(newHead) helpGC(lkh, current)
-//        findMaxUpToFraming(lkh, txn, next, newHead = false)
-//      case otherwise => throw new AssertionError(s"unexpected phase $otherwise in version search for $txn from $next")
+//
+//  @tailrec private def findMaxUpToFramingBackwards(txn: T, knownMax: Version): FindMaxResult = {
+//    val pred = if(knownMax == null) laggingTail.get else knownMax.lastWrittenPredecessorIfStable.get
+//    val predTxn = pred.txn
+//    if(predTxn == txn) {
+//      Found(pred)
+//    } if (predTxn.isTransitivePredecessor(txn)) {
+//      findMaxUpToFramingBackwards(txn, pred)
+//    } else {
+//      findMaxUpToFramingForwards(txn, pred, knownMax)
 //    }
 //  }
-//  private def findMaxUpToFraming(txn: T) = {
-//    val lkh = head.get()
-//    findMaxUpToFraming(lkh, txn, lkh, newHead = false)
+//
+//  @tailrec private def findMaxUpToFramingForwards(txn: T, tryMin: Version, knownMax: Version): FindMaxResult = {
+//    val succ = tryMin.next.get
+//    if(succ == knownMax) {
+//      val tryMinTxn = tryMin.txn
+//      if(tryMinTxn.phase == TurnPhase.Completed || txn.isTransitivePredecessor(tryMinTxn) || tryRecordRelationship(tryMinTxn, txn, tryMinTxn, txn)) {
+//        NotFound(tryMin, knownMax)
+//      } else {
+//        findMaxUpToFramingForwards(txn, tryMin.lastWrittenPredecessorIfStable.get, tryMin)
+//      }
+//    } else {
+//      val succTxn = succ.txn
+//      if(succTxn == txn) {
+//        Found(succ)
+//      } else if(succTxn.isTransitivePredecessor(txn)) {
+//        val tryMinTxn = tryMin.txn
+//        if(tryMinTxn.phase == TurnPhase.Completed || txn.isTransitivePredecessor(tryMinTxn) || tryRecordRelationship(tryMinTxn, txn, tryMinTxn, txn)) {
+//          NotFound(tryMin, knownMax)
+//        } else {
+//          findMaxUpToFramingForwards(txn, tryMin.lastWrittenPredecessorIfStable.get, tryMin)
+//        }
+//      } else {
+//        findMaxUpToFramingForwards(txn, succ, knownMax)
+//      }
+//    }
 //  }
 //
-//  @tailrec private def ensureVersionFraming(txn: T): Version = {
-//    tryEnsureVersion(txn, findMaxUpToFraming(txn)) match {
-//      case null => ensureVersionFraming(txn)
-//      case v => v
+//  @tailrec private def ensureVersionFraming(txn: T, knownMax: Version = null): Version = {
+//    findMaxUpToFramingBackwards(txn, knownMax) match {
+//      case Found(v) => v
+//      case NotFound(pred, succ) =>
+//        val v = new Version(txn, new AtomicReference(succ), new AtomicReference(pred), pending = 0, changed = 0, value = None)
+//        if(pred.next.compareAndSet(succ, v)) {
+//          if(succ == null) {
+//            laggingTail.compareAndSet(pred, succ) // Failure is ok
+//          } else {
+//            succ.lastWrittenPredecessorIfStable.compareAndSet(pred, v) // Failure is ok
+//          }
+//          v
+//        } else {
+//          ensureVersionFraming(txn, succ)
+//        }
 //    }
 //  }
 //
@@ -202,30 +218,9 @@
 //    }
 //  }
 //
-//  private def tryEnsureVersion(txn: T, findMaxResult: FindMaxResult): Version = {
-//    findMaxResult match {
-//      case Found(v) => v
-//      case NotFound(pred, succ) =>
-//        val v = new Version(txn, new AtomicReference(succ), computeSuccessorWrittenPredecessorIfStable(pred), pred.out, pending = 0, changed = 0, value = None)
-//        if(pred.next.compareAndSet(succ, v)) {
-//          // TODO ensure correct stable and out
-//          v
-//        } else {
-//          null
-//        }
-//    }
-//  }
+//  // =================== NOTIFYING SEARCH AND INSERT ===================== //
 //
-//  private def helpGC(lkh: Version, current: Version): Unit = {
-//    assert(lkh ne current, s"initial value for traversal should start with newHead false")
-//    if(head.compareAndSet(lkh, current)){
-//      current.lastWrittenPredecessorIfStable.lastWrittenPredecessorIfStable = null
-//    }
-//  }
-//
-//  // =================== EXECUTING SEARCH AND INSERT ===================== //
-//
-//  @tailrec def findMaxUpToExecuting(lkh: Version, txn: T, current: Version, newHead: Boolean): FindMaxResult = {
+//  @tailrec private def findMaxUpToExecutingForward(txn: T, current: Version): FindMaxResult = {
 //    val next = current.next.get
 //    if(next.txn == txn) {
 //      if(newHead) helpGC(lkh, current)
@@ -294,99 +289,6 @@
 //    }
 //  }
 //
-//  // =================== FIRST FRAME MANAGEMENT ===================== //
-//
-//  // needs to be executed while version.synchronized!
-//  @tailrec private def frameCreated(version: Version): FramingBranchResult[T, OutDep] = {
-//    val oldFirstFrame = firstFrame.get
-//    if(oldFirstFrame == null) {
-//      if(firstFrame.compareAndSet(null, version)) {
-//        FramingBranchResult.Frame(version.out, version.txn)
-//      } else {
-//        frameCreated(version)
-//      }
-//    } else if((oldFirstFrame ne version) && oldFirstFrame.txn.isTransitivePredecessor(version.txn)) {
-//      if (firstFrame.compareAndSet(oldFirstFrame, version)) {
-//        FramingBranchResult.FrameSupersede(version.out, version.txn, oldFirstFrame.txn)
-//      } else {
-//        frameCreated(version)
-//      }
-//    } else {
-//      FramingBranchResult.FramingBranchEnd
-//    }
-//  }
-//
-//  @tailrec private def firstFrameRemoved(version: Version, out: Set[OutDep]): FramingBranchResult[T, OutDep] = {
-//    // this first cas needs to happen still inside version.synchronized i believe..
-//    if(firstFrame.compareAndSet(version, null)) {
-//      @tailrec def findReframe(current: Version): FramingBranchResult[T, OutDep] = {
-//        if (current == null) {
-//          FramingBranchResult.Deframe(out, version.txn)
-//        } else {
-//          val maybeResult = current.synchronized {
-//            if (current.isFrame) {
-//              @tailrec def tryReframe(): FramingBranchResult[T, OutDep] = {
-//                val oldFirstFrame = firstFrame.get
-//                if (oldFirstFrame == null) {
-//                  if (firstFrame.compareAndSet(null, current)) {
-//                    FramingBranchResult.DeframeReframe(out, version.txn, current.txn)
-//                  } else {
-//                    tryReframe()
-//                  }
-//                } else if ((oldFirstFrame ne current) && oldFirstFrame.txn.isTransitivePredecessor(current.txn)) {
-//                  if (firstFrame.compareAndSet(oldFirstFrame, current)) {
-//                    // TODO now need to triple: deframe version.txn, reframe nextFrame.txn, AND deframe oldFirstFrame.txn ?!
-//                  } else {
-//                    tryReframe()
-//                  }
-//                } else {
-//                  FramingBranchResult.Deframe(out, version.txn)
-//                }
-//              }
-//              tryReframe()
-//            } else {
-//              null
-//            }
-//          }
-//          if (maybeResult == null) {
-//            findReframe(current.next.get)
-//          } else {
-//            maybeResult
-//          }
-//        }
-//      }
-//      findReframe(version.next.get)
-//    } else {
-//      FramingBranchResult.FramingBranchEnd
-//    }
-//
-//    val oldFirstFrame = firstFrame.get
-//    if(oldFirstFrame ne version) {
-//      if(firstFrame.compareAndSet(oldFirstFrame, version)) {
-//        if(oldFirstFrame == null) {
-//          FramingBranchResult.Frame(out, version.txn)
-//        } else {
-//          FramingBranchResult.FrameSupersede(out, version.txn, oldFirstFrame.txn)
-//        }
-//      } else {
-//        firstFrameCreated(version, out)
-//      }
-//    } else {
-//      FramingBranchResult.FramingBranchEnd
-//    }
-//  }
-//
-//  private def computeSuccessorWrittenPredecessorIfStable(predVersion: Version) = {
-//    if (predVersion.isFrame) {
-//      null
-//    } else if (predVersion.isWritten) {
-//      predVersion
-//    } else {
-//      predVersion.lastWrittenPredecessorIfStable
-//    }
-//  }
-//
-//
 //  // =================== FRAMING ====================
 //
 //  /**
@@ -394,9 +296,9 @@
 //    *
 //    * @param txn the transaction visiting the node for framing
 //    */
-//  def incrementFrame(txn: T): FramingBranchResult[T, OutDep] = synchronized {
+//  def incrementFrame(txn: T): FramingBranchResult[T, OutDep] = {
 //    val version = ensureVersionFraming(txn)
-//    val result = incrementFrame0(version)
+//    val result = synchronized { incrementFrame0(version) }
 //    result
 //  }
 //
@@ -406,123 +308,49 @@
 //    * @param supersede the transaction whose frame was superseded by the visiting transaction at the previous node
 //    */
 //  def incrementSupersedeFrame(txn: T, supersede: T): FramingBranchResult[T, OutDep] = {
-//    val version = ensureVersionFraming(txn)
-//    val succVersion = ensureVersionFraming(supersede) // TODO search from version on only?
-//    version.synchronized {
-//      version.pending += 1
-//      if (version.pending == 1) {
-//        // since this is a frame, successor can't be firstFrame
-//        frameCreated(version)
-//      } else if(version.pending <= 1) {
-//        AlmostFramingBranchResult.FirstFrameUnknown
-//      } else {
-//        // since this is a frame, successor can't be firstFrame
-//        succVersion.pending -= 1
-//        FramingBranchEnd
-//      }
-//    } match {
-//      case AlmostFramingBranchResult.FirstFrameUnknown =>
-//        decrementFrame0(succVersion)
-//      case otherwise: FramingBranchResult[T, OutDep] =>
-//        succVersion.synchronized{
-//          succVersion.pending -= 1
-//        }
-//        otherwise
+//    val supersedeVersion = ensureVersionFraming(supersede)
+//    val version = ensureVersionFraming(txn, supersedeVersion)
+//    val result = synchronized {
+//      supersedeVersion.pending -= 1
+//      incrementFrame0(version)
 //    }
-//  }
-//
-//  def decrementFrame(txn: T): FramingBranchResult[T, OutDep] = synchronized {
-//    val version = ensureVersionFraming(txn)
-//    val result = decrementFrame0(version)
 //    result
 //  }
 //
-//  def decrementReframe(txn: T, reframe: T): FramingBranchResult[T, OutDep] = synchronized {
-//    val version = ensureVersionFraming(txn)
-//    val succVersion = ensureVersionFraming(reframe) // TODO search from version on only?
-//    version.synchronized {
-//      version.pending -= 1
-//      if (version.pending == 0 && firstFrame.get == version) {
-//        // since this is a frame, successor can't be firstFrame
-//        firstFrameRemoved(version)
-//      } else if(version.pending <= 1) {
-//        AlmostFramingBranchResult.FirstFrameUnknown
-//      } else {
-//        // since this is a frame, successor can't be firstFrame
-//        FramingBranchEnd
-//      }
-//    } match {
-//      case AlmostFramingBranchResult.FirstFrameUnknown =>
-//        decrementFrame0(succVersion)
-//      case otherwise: FramingBranchResult[T, OutDep] =>
-//        succVersion.synchronized{
-//          succVersion.pending -= 1
-//        }
-//        otherwise
-//    }
-//  }
-//
-//  private def incrementFrame0(version: Version): FramingBranchResult[T, OutDep] = version.synchronized {
+//  private def incrementFrame0(version: Version): FramingBranchResult[T, OutDep] = {
 //    version.pending += 1
-//    if(version.pending == 1) {
-//      frameCreated(version)
-//    } else {
-//      FramingBranchResult.FramingBranchEnd
-//    }
-//  }
-//
-//  private def decrementFrame0(version: Version): FramingBranchResult[T, OutDep] = version.synchronized {
-//    version.pending -= 1
-//    if (version.pending == 0) {
-//      firstFrameRemoved(version, version.out)
-//      deframeResultAfterPreviousFirstFrameWasRemoved(txn, version)
-//    } else {
-//      FramingBranchResult.FramingBranchEnd
-//    }
-//  }
-//
-//  @tailrec private def destabilizeBackwardsUntilFrame(): Unit = {
-//    if(firstFrame < size) {
-//      val version = _versions(firstFrame)
-//      assert(version.isStable, s"cannot destabilize $firstFrame: $version")
-//      version.lastWrittenPredecessorIfStable = null
-//    }
-//    firstFrame -= 1
-//    if(!_versions(firstFrame).isFrame) destabilizeBackwardsUntilFrame()
-//  }
-//
-//  private def incrementFrameResultAfterNewFirstFrameWasCreated(txn: T, position: Int) = {
-//    val previousFirstFrame = firstFrame
-//    destabilizeBackwardsUntilFrame()
-//    assert(firstFrame == position, s"destablizeBackwards did not reach $position: ${_versions(position)} but stopped at $firstFrame: ${_versions(firstFrame)}")
-//
-//    if(previousFirstFrame < size) {
-//      FramingBranchResult.FrameSupersede(_versions(position).out, txn, _versions(previousFirstFrame).txn)
-//    } else {
-//      FramingBranchResult.Frame(_versions(position).out, txn)
-//    }
-//  }
-//
-//  @tailrec private def stabilizeForwardsUntilFrame(stabilizeTo: Version): Unit = {
-//    firstFrame += 1
-//    if (firstFrame < size) {
-//      val stabilized = _versions(firstFrame)
-//      assert(!stabilized.isStable, s"cannot stabilize $firstFrame: $stabilized")
-//      stabilized.lastWrittenPredecessorIfStable = stabilizeTo
-//      if(stabilized.stableWaiters > 0) {
-//        if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] unparking ${stabilized.txn.userlandThread.getName} after stabilized $stabilized.")
-//        LockSupport.unpark(stabilized.txn.userlandThread)
+//    if(version == firstFrame) {
+//      assert(version.pending != 1, s"previously not a frame $version was already pointed to as firstFrame in $this")
+//      if(version.pending == 0) {
+//        // if first frame was removed (i.e., overtake compensation was resolved -- these cases mirror progressToNextWriteForNotification)
+//        firstFrame = firstFrame.next.get()
+//        while(firstFrame != null && firstFrame.pending == 0) {
+//          // keep moving further in the unlikely (?) case that the next version is also obsolete
+//          firstFrame = firstFrame.next.get()
+//        }
+//        if (firstFrame == null || firstFrame.pending < 0) {
+//          FramingBranchResult.FramingBranchEnd
+//        } else {
+//          FramingBranchResult.Frame(outgoings, firstFrame.txn)
+//        }
+//      } else {
+//        // just incremented an already existing and propagated frame
+//        FramingBranchResult.FramingBranchEnd
 //      }
-//      if (!stabilized.isFrame) stabilizeForwardsUntilFrame(stabilizeTo)
-//    }
-//  }
-//
-//  private def deframeResultAfterPreviousFirstFrameWasRemoved(txn: T, version: Version) = {
-//    stabilizeForwardsUntilFrame(version)
-//    if(firstFrame < size) {
-//      FramingBranchResult.DeframeReframe(version.out, txn, _versions(firstFrame).txn)
+//    } else if(firstFrame == null || firstFrame.txn.isTransitivePredecessor(version.txn)) {
+//      // created a new frame
+//      assert(version.pending == 1, s"found overtake or frame compensation $version before firstFrame in $this")
+//      val oldFF = firstFrame
+//      firstFrame = version
+//      if(oldFF == null || oldFF.pending < 0) {
+//        FramingBranchResult.Frame(outgoings, version.txn)
+//      } else {
+//        FramingBranchResult.FrameSupersede(outgoings, version.txn, oldFF.txn)
+//      }
 //    } else {
-//      FramingBranchResult.Deframe(version.out, txn)
+//      assert(version.txn.isTransitivePredecessor(firstFrame.txn), s"firstFrame $firstFrame apparently isn't ordered against incremented version $version")
+//      // created or incremented a non-first frame
+//      FramingBranchResult.FramingBranchEnd
 //    }
 //  }
 //

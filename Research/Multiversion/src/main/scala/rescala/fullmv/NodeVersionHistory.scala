@@ -767,14 +767,10 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
       if(version.pending == 0) {
         // if first frame was removed (i.e., overtake compensation was resolved -- these cases mirror progressToNextWriteForNotification)
         val maybeNewFirstFrame = stabilizeForwardsUntilFrame(version.lastWrittenPredecessorIfStable)
-        if (maybeNewFirstFrame != null) {
-          if(maybeNewFirstFrame.pending < 0) {
-            FramingBranchResult.FramingBranchEnd
-          } else {
-            FramingBranchResult.Frame(out, maybeNewFirstFrame.txn)
-          }
-        } else {
+        if (maybeNewFirstFrame == null || maybeNewFirstFrame.pending < 0) {
           FramingBranchResult.FramingBranchEnd
+        } else {
+          FramingBranchResult.Frame(out, maybeNewFirstFrame.txn)
         }
       } else {
         // just incremented an already existing and propagated frame
