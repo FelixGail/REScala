@@ -21,27 +21,22 @@ import scala.collection.mutable.ArrayBuffer
   * @tparam OutDep the type of outgoing dependency nodes
   */
 class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePersistency: InitValues[V]) {
-  class Version(val txn: T, val next: AtomicReference[Version], val lastWrittenPredecessorIfStable: AtomicReference[Version], var pending: Int, var changed: Int, @volatile var value: Option[V]) /*extends MyManagedBlocker*/ {
+  class Version(val txn: T, val next: AtomicReference[Version], val lastWrittenPredecessorIfStable: AtomicReference[Version], @volatile var stable: Boolean, var pending: Int, var changed: Int, @volatile var value: Option[V]) /*extends MyManagedBlocker*/ {
     def read(): V = {
-      assert(isStable, "reading unstable "+this)
+      assert(stable, "reading unstable "+this)
       assert(value.isDefined, "reading un-written "+this)
       value.get
     }
 
     @volatile var stableWaiters: Int = 0
 
-    def isStable: Boolean = {
-      val stableTxn = NonblockingSkipListVersionHistory.this.latestStable.get().txn
-      txn.isTransitivePredecessor(stableTxn) || stableTxn.phase == TurnPhase.Completed
-    }
-
     // less common blocking case
     // fake lazy val without synchronization, because it is accessed only while the node's monitor is being held.
     def blockForStable(): Unit = {
-      if (!isStable) {
+      if (!stable) {
         stableWaiters += 1
         assert(Thread.currentThread() == txn.userlandThread, s"this assertion is only valid without a threadpool .. otherwise it should be txn==txn, but that would require txn to be spliced in here which is annoying while using the managedblocker interface")
-        while (!isStable) {
+        while (!stable) {
           if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] parking for stable ${Version.this}")
           LockSupport.park(this)
           if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] unparked on ${Version.this}")
@@ -52,7 +47,7 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
 
     override def toString: String = {
       val nxt = next.get()
-      s"Version($txn, next=${if(nxt == null) "<End>" else nxt.txn}, prev=${lastWrittenPredecessorIfStable.get().txn}, pending=$pending, changed=$changed, value=$value"
+      s"Version($txn, next=${if(nxt == null) "<End>" else nxt.txn}, prev=${lastWrittenPredecessorIfStable.get().txn}, stable=$stable, pending=$pending, changed=$changed, value=$value"
 //      if(isWritten){
 //        s"Written($txn, v=${value.get})"
 //      } else if (isReadOrDynamic) {
@@ -81,12 +76,12 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
 
   // =================== STORAGE ====================
 
-  val latestStable = new AtomicReference(new Version(init, new AtomicReference(null), lastWrittenPredecessorIfStable = null, pending = 0, changed = 0, Some(valuePersistency.initialValue)))
+  val latestFinal = new AtomicReference(new Version(init, new AtomicReference(null), lastWrittenPredecessorIfStable = null, stable = true, pending = 0, changed = 0, Some(valuePersistency.initialValue)))
   var firstFrame = null.asInstanceOf[Version]
-  val laggingTail = new AtomicReference(latestStable.get)
-  var laggingGC = latestStable.get
+  val laggingTail = new AtomicReference(latestFinal.get)
+  var laggingGC = latestFinal.get
 
-  var latestValue: V = latestStable.get.read
+  var latestValue: V = latestFinal.get.read
   var incomings: Set[InDep] = Set.empty
   var outgoings: Set[OutDep] = Set.empty
 
@@ -128,7 +123,7 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
     findMaxUpToFramingBackwards(txn, knownMax) match {
       case Found(v) => v
       case NotFound(pred, succ) =>
-        val v = new Version(txn, new AtomicReference(succ), new AtomicReference(pred), pending = 0, changed = 0, value = None)
+        val v = new Version(txn, new AtomicReference(succ), new AtomicReference(pred), stable = false, pending = 0, changed = 0, value = None)
         if(pred.next.compareAndSet(succ, v)) {
           if(succ == null) {
             laggingTail.compareAndSet(pred, succ) // Failure is ok
@@ -243,62 +238,49 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
     }
   }
 
-  @tailrec private def helpStable(): Version = {
-    val current = latestStable.get()
-    if(current.pending == 0 && current.changed == 0) {
-      // current is not only stable, but also final, so we have to move
-      val lastWrittenPredecessor = if(current.value.isDefined) current else current.lastWrittenPredecessorIfStable.get
-      var stabilize = current.next.get()
-      if(stabilize.txn.phase <= TurnPhase.Framing) {
-        current
-      } else {
-        var next = stabilize.next.get()
-        while (next.txn.phase >= TurnPhase.Executing && stabilize.pending == 0 && stabilize.changed == 0) {
-          stabilize.lastWrittenPredecessorIfStable.set(lastWrittenPredecessor)
-          stabilize = stabilize.next.get()
-        }
-        if (latestStable.compareAndSet(current, stabilize)) {
-          pushStabilizedAndFinalized(current, stabilize)
-          stabilize
-        } else {
-          // maybe could short-cut to another cas instead of re-iterating the list:
-          // if(stabilize < newStable || (stabilize.isCompleted && newStable) then done.
-          // if(newStable < stabilize || (newStable.isCompleted && !stabilize.isCompleted))
-          // if(newStable.isCompleted && stabilize.isCompleted) then restart helpStable().
-          // then tryCas(newStable, stabilize)
-          helpStable()
-        }
-      }
+  /**
+    * @return the latest finalized version's next pointer
+    */
+  @tailrec private def helpFinalize(): Version = {
+    val current = latestFinal.get()
+    val lastWrittenPredecessor = if(current.value.isDefined) current else current.lastWrittenPredecessorIfStable.get
+    val finalized = finalizeNext(current, lastWrittenPredecessor)
+    if (latestFinal.compareAndSet(current, finalized)) {
+      finalized.next.get()
     } else {
+      // maybe could short-cut to another cas instead of re-iterating the list:
+      // if(stabilize < newStable || (stabilize.isCompleted && newStable) then done.
+      // if(newStable < stabilize || (newStable.isCompleted && !stabilize.isCompleted))
+      // if(newStable.isCompleted && stabilize.isCompleted) then restart helpStable().
+      // then tryCas(newStable, stabilize)
+      helpFinalize()
+    }
+  }
+  @tailrec private def finalizeNext(current: Version, lastWrittenPredecessor: Version): Version = {
+    val stabilize = current.next.get()
+    if(stabilize == null || stabilize.txn.phase == TurnPhase.Framing) {
       current
-    }
-  }
-
-  @tailrec private def pushStabilizedAndFinalized(current: Version, upTo: Version): Unit = {
-    if(current.stableWaiters > 0) LockSupport.unpark(current.txn.userlandThread)
-    if(current != upTo) {
-      // if(current.finalWaiters > 0) LockSupport.unpark(current.txn.userlandThread)
-      pushStabilizedAndFinalized(current.next.get(), upTo)
-    }
-  }
-
-  private def findMaxUpToNotifying(txn: T) = {
-    val current = helpStable()
-    if(current.txn == txn) {
-      assert(current.pending > 0, s"notify for latestStable $current, but is final already")
-      assert(firstFrame == current, s"notify for non-final latestStable $current, but firstFrame is different $firstFrame")
-      Found(current)
     } else {
-      assert(txn.isTransitivePredecessor(current.txn) || current.txn.phase == TurnPhase.Completed, s"notify for $txn in final region before latestStable $current")
-
+      assert(stabilize.txn.phase >= TurnPhase.Executing, s"unexpedted phase on ${stabilize.txn}")
+      if(!stabilize.stable) {
+        stabilize.lastWrittenPredecessorIfStable.set(lastWrittenPredecessor)
+        stabilize.stable = true
+        if (stabilize.stableWaiters > 0) LockSupport.unpark(stabilize.txn.userlandThread)
+      }
+      if(stabilize.pending == 0 && stabilize.changed == 0) {
+        // if(stabilize.finalWaiters > 0) LockSupport.unpark(stabilize.txn.userlandThread)
+        finalizeNext(stabilize, lastWrittenPredecessor)
+      } else {
+        current
+      }
     }
   }
 
-  @tailrec private def ensureVersionNotifying(txn: T, from: Version = helpStable()): Version = {
+  @tailrec private def ensureVersionNotifying(txn: T, from: Version = helpFinalize()): Version = {
     findMaxUpToNotifyingForward(txn, from) match {
       case Found(v) => v
       case NotFound(pred, succ) =>
-        val v = new Version(txn, new AtomicReference(succ), new AtomicReference(pred), pending = 0, changed = 0, value = None)
+        val v = new Version(txn, new AtomicReference(succ), new AtomicReference(pred), stable = false, pending = 0, changed = 0, value = None)
         if(pred.next.compareAndSet(succ, v)) {
           v
         } else {
@@ -351,7 +333,7 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
       findMaxUpToFollowFramingBackwards(txn, from, knownMax) match {
         case Found(v) => v
         case NotFound(pred, succ) =>
-          val v = new Version(txn, new AtomicReference(succ), new AtomicReference(pred), pending = 0, changed = 0, value = None)
+          val v = new Version(txn, new AtomicReference(succ), new AtomicReference(pred), stable = false, pending = 0, changed = 0, value = None)
           if (pred.next.compareAndSet(succ, v)) {
             v
           } else {
@@ -385,7 +367,7 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
     val supersedeVersion = ensureVersionFraming(supersede)
     val version = ensureVersionFraming(txn, supersedeVersion)
     val result = synchronized {
-      supersedeVersion.pending -= 1
+      supersedeVersion.pending -= 1 // TODO move this behind synchronized? check clean-ups in incrementFrame0
       incrementFrame0(version)
     }
     result
@@ -475,7 +457,7 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
           NotificationResultAction.GlitchFreeReady
         } else {
           // ResolvedFirstFrameToUnchanged
-          progressToNextWriteForNotification(version, version.lastWrittenPredecessorIfStable.get)
+          findNextFrameForSuccessorOperation(/*version, version.lastWrittenPredecessorIfStable.get*/)
         }
       } else {
         if (version.changed > 0) {
@@ -494,11 +476,7 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
     latestValue
   }
 
-  /**
-    * progress [[firstFrame]] forward until a [[Version.isFrame]] is encountered, and
-    * return the resulting notification out (with reframing if subsequent write is found).
-    */
-  def reevOut(turn: T, maybeValue: Option[V]): NotificationResultAction.ReevOutResult[T, OutDep] = synchronized {
+  def reevOut(turn: T, maybeValue: Option[V]): NotificationResultAction.ReevOutResult[T, OutDep] = {
     val version = firstFrame
     assert(version.txn == turn, s"$turn called reevDone, but first frame is $version (different transaction)")
     assert(version.value.isEmpty, s"$turn cannot write twice: $version")
@@ -506,41 +484,36 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
     val result = if(version.pending != 0) {
       NotificationResultAction.Glitched
     } else {
-      assert(version.pending == 0, s"$this is not ready to be written"))
+      assert(version.pending == 0, s"$this is not ready to be written")
       assert(version.changed > 0 || (version.changed == 0 && maybeValue.isEmpty), s"$turn cannot write changed=${maybeValue.isDefined} in $this")
-      version.changed = 0
-      val stabilizeTo = if (maybeValue.isDefined) {
-        latestValue = valuePersistency.unchange.unchange(maybeValue.get)
-        version.value = maybeValue
-        version
-      } else {
-        version.lastWrittenPredecessorIfStable.get
+      synchronized {
+        if (maybeValue.isDefined) {
+          latestValue = valuePersistency.unchange.unchange(maybeValue.get)
+          version.value = maybeValue
+        }
+        version.changed = 0
+        findNextFrameForSuccessorOperation()
       }
-      progressToNextWriteForNotification(version, stabilizeTo)
     }
 //    assertOptimizationsIntegrity(s"reevOut($turn, ${maybeValue.isDefined}) -> $result")
     result
   }
 
-  /**
-    * progresses [[firstFrame]] forward until a [[Version.isFrame]] is encountered and assemble all necessary
-    * information to send out change/nochange notifications for the given transaction. Also capture synchronized,
-    * whether or not the possibly encountered write [[Version.isReadyForReevaluation]].
-    * @return the notification and next reevaluation descriptor.
-    */
-  private def progressToNextWriteForNotification(finalizedVersion: Version, stabilizeTo: Version): NotificationResultAction.NotificationOutAndSuccessorOperation[T, OutDep] = {
-    stabilizeForwardsUntilFrame(stabilizeTo)
-    val res = if(firstFrame < size) {
-      val newFirstFrame = _versions(firstFrame)
-      if(newFirstFrame.isReadyForReevaluation) {
-        NotificationResultAction.NotificationOutAndSuccessorOperation.NextReevaluation(finalizedVersion.out, newFirstFrame.txn)
-      } else {
-        NotificationResultAction.NotificationOutAndSuccessorOperation.FollowFraming(finalizedVersion.out, newFirstFrame.txn)
-      }
-    } else {
-      NotificationResultAction.NotificationOutAndSuccessorOperation.NoSuccessor(finalizedVersion.out)
+  private def findNextFrameForSuccessorOperation(/*finalizedVersion: Version, stabilizeTo: Version*/): NotificationResultAction.NotificationOutAndSuccessorOperation[T, OutDep] = {
+    var nextFrame = helpFinalize()
+    while(nextFrame != null && nextFrame.pending == 0 && nextFrame.changed == 0) {
+      nextFrame = nextFrame.next.get()
     }
-    res
+    firstFrame = nextFrame
+    if(nextFrame == null) {
+      NotificationResultAction.NotificationOutAndSuccessorOperation.NoSuccessor(outgoings)
+    } else if (nextFrame.pending == 0) {
+      assert(nextFrame.changed > 0, s"stopped at non-frame $nextFrame")
+      assert(nextFrame.txn.phase == TurnPhase.Executing, s"change on non-executing $nextFrame")
+      NotificationResultAction.NotificationOutAndSuccessorOperation.NextReevaluation(outgoings, nextFrame.txn)
+    } else {
+      NotificationResultAction.NotificationOutAndSuccessorOperation.FollowFraming(outgoings, nextFrame.txn)
+    }
   }
 
   // =================== READ OPERATIONS ====================
@@ -588,16 +561,11 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
   }
 
   def staticBefore(txn: T): V = {
-    //    assert(!valuePersistency.isTransient, s"$txn invoked staticBefore on transient struct")
-    val version = synchronized {
-      val pos = findFinalPosition(txn)
-      _versions(if (pos < 0) -pos - 1 else pos)
+    var predecessor = latestFinal.get()
+    while(predecessor.txn == txn || predecessor.txn.isTransitivePredecessor(txn)) {
+      predecessor = predecessor.lastWrittenPredecessorIfStable.get()
     }
-    if(version.txn != txn && version.value.isDefined) {
-      version.value.get
-    } else {
-      version.lastWrittenPredecessorIfStable.value.get
-    }
+    predecessor.read()
   }
 
   /**
@@ -621,19 +589,11 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
   }
 
   def staticAfter(txn: T): V = {
-    val version = synchronized {
-      val pos = findFinalPosition(txn)
-      _versions(if (pos < 0) -pos - 1 else pos)
+    var ownOrPredecessor = latestFinal.get()
+    while(ownOrPredecessor.txn != txn && ownOrPredecessor.txn.isTransitivePredecessor(txn)) {
+      ownOrPredecessor = ownOrPredecessor.lastWrittenPredecessorIfStable.get()
     }
-    if(version.value.isDefined) {
-      if(version.txn == txn) {
-        version.value.get
-      } else {
-        valuePersistency.unchange.unchange(version.value.get)
-      }
-    } else {
-      valuePersistency.unchange.unchange(version.lastWrittenPredecessorIfStable.value.get)
-    }
+    ownOrPredecessor.read()
   }
 
   // =================== DYNAMIC OPERATIONS ====================
@@ -645,9 +605,11 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
     * @return the appropriate [[Version.value]].
     */
   def discover(txn: T, add: OutDep): (Seq[T], Option[T]) = synchronized {
-    val position = ensureReadVersion(txn)
-    assert(!_versions(position).out.contains(add), "must not discover an already existing edge!")
-    retrofitSourceOuts(position, add, +1)
+    computeRetrofit(txn, synchronized {
+      outgoings += add
+      // TODO need to handle the case where txn lies beyond latestFinal, i.e., create trailing read version
+      (latestFinal.get(), firstFrame)
+    })
   }
 
   /**
@@ -656,9 +618,33 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
     * @param remove the removed edge's sink node
     */
   def drop(txn: T, remove: OutDep): (Seq[T], Option[T]) = synchronized {
-    val position = ensureReadVersion(txn)
-    assert(_versions(position).out.contains(remove), "must not drop a non-existing edge!")
-    retrofitSourceOuts(position, remove, -1)
+    computeRetrofit(txn, synchronized {
+      outgoings -= remove
+      // TODO need to handle the case where txn lies beyond latestFinal, i.e., create trailing read version
+      (latestFinal.get(), firstFrame)
+    })
+  }
+
+  private def computeRetrofit(txn: T, latestFinalAndFirstFrame: (Version, Version)): (Seq[T], Option[T]) = {
+    var maybeFirstFrame = latestFinalAndFirstFrame._2
+    val frame = if(maybeFirstFrame != null) {
+      assert(maybeFirstFrame.txn.isTransitivePredecessor(txn), s"can only retrofit into the past, but $txn is in the future of firstframe $firstFrame!")
+      Some(maybeFirstFrame.txn)
+    } else {
+      None
+    }
+
+    var assess = latestFinalAndFirstFrame._1
+    if(assess.value.isEmpty) assess = assess.lastWrittenPredecessorIfStable.get()
+    var retrofits: List[T] = Nil
+    while(assess.txn.isTransitivePredecessor(txn) || (
+      assess.txn.phase != TurnPhase.Completed &&
+      !txn.isTransitivePredecessor(assess.txn) &&
+      !tryRecordRelationship(assess.txn, txn, assess.txn, txn)
+    )) {
+      retrofits ::= assess.txn
+      assess = assess.lastWrittenPredecessorIfStable.get
+    }
   }
 
   /**
@@ -723,168 +709,5 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
     if(successorWrittenVersions.size > sizePrediction) System.err.println(s"FullMV retrofitSourceOuts predicted size max($firstFrame - $position, 0) = $sizePrediction, but size eventually was ${successorWrittenVersions.size}")
     assertOptimizationsIntegrity(s"retrofitSourceOuts(from=$position, outdiff=$arity $delta) -> (writes=$successorWrittenVersions, maybeFrame=$maybeSuccessorFrame)")
     (successorWrittenVersions, maybeSuccessorFrame)
-  }
-
-  def fullGC(): Int = synchronized {
-    moveGCHintToLatestCompleted()
-    gcAndLeaveHoles(_versions, _versions(latestGChint).value.isDefined, 0, -1, -1)
-    lastGCcount
-  }
-
-  private def moveGCHintToLatestCompleted(): Unit = {
-    @tailrec @inline def findLastCompleted(to: Int): Unit = {
-      // gc = 0 = completed
-      // to = 1 = !completed
-      if (to > latestGChint) {
-        val idx = latestGChint + (to - latestGChint + 1) / 2
-        // 0 + (1 - 0 + 1) / 2 = 1
-        if (_versions(idx).txn.phase == TurnPhase.Completed) {
-          latestGChint = idx
-          findLastCompleted(to)
-        } else {
-          findLastCompleted(idx - 1)
-        }
-      }
-    }
-
-    val latestPossibleGCHint = firstFrame - 1
-    if (_versions(latestPossibleGCHint).txn.phase == TurnPhase.Completed) {
-      // common case shortcut and corner case: all transactions that can be completed are completed (e.g., graph is in resting state)
-      latestGChint = latestPossibleGCHint
-    } else {
-      findLastCompleted(firstFrame - 2)
-    }
-  }
-
-  private def arrangeVersionArrayAndCreateVersions(insertOne: Int, one: T, insertTwo: Int, two: T): (Int, Int) = {
-    arrangeVersionArray(2, insertOne, insertTwo)
-    val first = insertOne - lastGCcount
-    val second = insertTwo - lastGCcount + 1
-    if(first == size) {
-      val predVersion = _versions(size - 1)
-      val out = predVersion.out
-      val lastWrittenPredecessorIfStable = computeSuccessorWrittenPredecessorIfStable(predVersion)
-      _versions(first) = new Version(one, lastWrittenPredecessorIfStable, out, pending = 0, changed = 0, value = None)
-      _versions(second) = new Version(two, lastWrittenPredecessorIfStable, out, pending = 0, changed = 0, value = None)
-      if(lastWrittenPredecessorIfStable != null) firstFrame += 2
-      size += 2
-      assertOptimizationsIntegrity(s"arrangeVersionsAppend($insertOne -> $first, $one, $insertTwo -> $second, $two)")
-      (first, second)
-    } else {
-      createVersionInHole(first, one)
-      createVersionInHole(second, two)
-      assertOptimizationsIntegrity(s"arrangeVersions($insertOne -> $first, $one, $insertTwo -> $second, $two)")
-      (first, second)
-    }
-  }
-  private def arrangeVersionArrayAndCreateVersion(insertPos: Int, txn: T): Int = {
-    arrangeVersionArray(1, insertPos, -1)
-    val pos = insertPos - lastGCcount
-    createVersionInHole(pos, txn)
-    assertOptimizationsIntegrity(s"arrangeVersions($insertPos -> $pos, $txn)")
-    pos
-  }
-
-  private def arrangeVersionArray(create: Int, firstHole: Int, secondHole: Int): Unit = {
-    assert(create != 0 || (firstHole < 0 && secondHole < 0), s"holes $firstHole and $secondHole do not match 0 insertions")
-    assert(create != 1 || (firstHole >= 0 && secondHole < 0), s"holes $firstHole and $secondHole do not match 1 insertions")
-    assert(create != 2 || (firstHole >= 0 && secondHole >= 0), s"holes $firstHole and $secondHole do not match 2 insertions")
-    assert(secondHole < 0 || secondHole >= firstHole, s"second hole ${secondHole }must be behind or at first $firstHole")
-    if(firstHole == size && size + create <= _versions.length) {
-      // if only versions should be added at the end (i.e., existing versions don't need to be moved) and there's enough room, just don't do anything
-      lastGCcount = 0
-    } else {
-      if (NodeVersionHistory.DEBUG_GC) println(s"[${Thread.currentThread().getName}] gc attempt to insert $create: ($firstHole, $secondHole) in $this")
-      val hintVersionIsWritten = _versions(latestGChint).value.isDefined
-      val straightDump = latestGChint - (if (hintVersionIsWritten) 0 else 1)
-      if(straightDump == 0 && size + create <= _versions.length) {
-        if (NodeVersionHistory.DEBUG_GC) println(s"[${Thread.currentThread().getName}] hintgc($latestGChint): -$straightDump would have no effect, but history rearrangement is possible")
-        arrangeHolesWithoutGC(_versions, firstHole, secondHole)
-      } else if (size - straightDump + create <= _versions.length) {
-        if(NodeVersionHistory.DEBUG_GC) println(s"[${Thread.currentThread().getName}] hintgc($latestGChint): -$straightDump accepted")
-        gcAndLeaveHoles(_versions, hintVersionIsWritten, create, firstHole, secondHole)
-      } else {
-        // straight dump with gc hint isn't enough: see what full GC brings
-        if(NodeVersionHistory.DEBUG_GC) println(s"[${Thread.currentThread().getName}] hintgc($latestGChint): -$straightDump insufficient and not enough room for history rearrangement")
-        moveGCHintToLatestCompleted()
-        val fullGCVersionIsWritten = _versions(latestGChint).value.isDefined
-        val fullDump = latestGChint - (if (fullGCVersionIsWritten) 0 else 1)
-        if (size - fullDump + create <= _versions.length) {
-          if(NodeVersionHistory.DEBUG_GC) println(s"[${Thread.currentThread().getName}] fullgc($latestGChint): -$fullDump accepted")
-          gcAndLeaveHoles(_versions, fullGCVersionIsWritten, create, firstHole, secondHole)
-        } else {
-          // full GC also isn't enough either: grow the array.
-          val grown = new Array[Version](_versions.length + (_versions.length >> 1))
-          if(fullDump == 0) {
-            if(NodeVersionHistory.DEBUG_GC) println(s"[${Thread.currentThread().getName}] fullgc($latestGChint): -$fullDump would have no effect, rearraging after growing max size ${_versions.length} -> ${grown.length}")
-            if(firstHole > 0) System.arraycopy(_versions, 0, grown, 0, firstHole)
-            arrangeHolesWithoutGC(grown, firstHole, secondHole)
-          } else {
-            if(NodeVersionHistory.DEBUG_GC) println(s"[${Thread.currentThread().getName}] fullgc($latestGChint): -$fullDump insufficient, also growing max size ${_versions.length} -> ${grown.length}")
-            gcAndLeaveHoles(grown, fullGCVersionIsWritten, create, firstHole, secondHole)
-          }
-          _versions = grown
-        }
-      }
-      if(NodeVersionHistory.DEBUG_GC) println(s"[${Thread.currentThread().getName}] after gc of $lastGCcount, holes at (${if(firstHole == -1) -1 else firstHole - lastGCcount}, ${if(secondHole == -1) -1 else secondHole - lastGCcount + 1}): $this")
-    }
-  }
-
-  private def arrangeHolesWithoutGC(writeTo: Array[Version], firstHole: Int, secondHole: Int): Unit = {
-    if (firstHole >= 0 && firstHole < size) {
-      if (secondHole < 0 || secondHole == size) {
-        System.arraycopy(_versions, firstHole, writeTo, firstHole + 1, size - firstHole)
-      } else {
-        System.arraycopy(_versions, secondHole, writeTo, secondHole + 2, size - secondHole)
-        if (secondHole != firstHole) System.arraycopy(_versions, firstHole, writeTo, firstHole + 1, secondHole - firstHole)
-      }
-    }
-    lastGCcount = 0
-  }
-
-  private def gcAndLeaveHoles(writeTo: Array[Version], hintVersionIsWritten: Boolean, create: Int, firstHole: Int, secondHole: Int): Unit = {
-    // if a straight dump using the gc hint makes enough room, just do that
-    if (hintVersionIsWritten) {
-      if(NodeVersionHistory.DEBUG_GC) println(s"[${Thread.currentThread().getName}] hint is written: dumping $latestGChint to offset 0")
-      // if hint is written, just dump everything before
-      latestKnownStable -= latestGChint
-      dumpToOffsetAndLeaveHoles(writeTo, latestGChint, 0, firstHole, secondHole)
-      lastGCcount = latestGChint
-    } else {
-      // otherwise find the latest write before the hint, move it to index 0, and only dump everything else
-      lastGCcount = latestGChint - 1
-      writeTo(0) = _versions(latestGChint).lastWrittenPredecessorIfStable
-      latestKnownStable = if(latestKnownStable <= latestGChint) 0 else latestKnownStable - lastGCcount
-      dumpToOffsetAndLeaveHoles(writeTo, latestGChint, 1, firstHole, secondHole)
-    }
-    writeTo(0).lastWrittenPredecessorIfStable = null
-    val sizeBefore = size
-    latestGChint -= lastGCcount
-    firstFrame -= lastGCcount
-    size -= lastGCcount
-    if ((_versions eq writeTo) && size + create < sizeBefore) java.util.Arrays.fill(_versions.asInstanceOf[Array[AnyRef]], size + create, sizeBefore, null)
-  }
-
-  private def dumpToOffsetAndLeaveHoles(writeTo: Array[Version], retainFrom: Int, retainTo: Int, firstHole: Int, secondHole: Int): Unit = {
-    assert(retainFrom > retainTo, s"this method is either broken or pointless (depending on the number of inserts) if not at least one version is removed.")
-    assert(firstHole >= 0 || secondHole < 0, "must not give only a second hole")
-    assert(secondHole < 0 || secondHole >= firstHole, "second hole must be behind or at first")
-    // just dump everything before the hint
-    if (firstHole < 0 || firstHole == size) {
-      // no hole or holes at the end only: the entire array stays in one segment
-      System.arraycopy(_versions, retainFrom, writeTo, retainTo, size - retainFrom)
-    } else {
-      // copy first segment
-      System.arraycopy(_versions, retainFrom, writeTo, retainTo, firstHole - retainFrom)
-      val gcOffset = retainTo - retainFrom
-      val newFirstHole = gcOffset + firstHole
-      if (secondHole < 0 || secondHole == size) {
-        // no second hole or second hole at the end only: there are only two segments
-        if((_versions ne writeTo) || gcOffset != 1) System.arraycopy(_versions, firstHole, writeTo, newFirstHole + 1, size - firstHole)
-      } else {
-        if (secondHole != firstHole && ((_versions ne writeTo) || gcOffset != 1)) System.arraycopy(_versions, firstHole, writeTo, newFirstHole + 1, secondHole - firstHole)
-        if((_versions ne writeTo) || gcOffset != 2) System.arraycopy(_versions, secondHole, writeTo, gcOffset + secondHole + 2, size - secondHole)
-      }
-    }
   }
 }
