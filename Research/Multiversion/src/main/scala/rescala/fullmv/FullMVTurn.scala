@@ -273,13 +273,13 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
 
   //========================================================Scheduler Interface============================================================
 
-  override def makeDerivedStructState[P](valuePersistency: InitValues[P]): NodeVersionHistory[P, FullMVTurn, ReSource[FullMVStruct], Reactive[FullMVStruct]] = {
-    val state = new NodeVersionHistory[P, FullMVTurn, ReSource[FullMVStruct], Reactive[FullMVStruct]](engine.dummy, valuePersistency)
+  override def makeDerivedStructState[P](valuePersistency: InitValues[P]): NonblockingSkipListVersionHistory[P, FullMVTurn, ReSource[FullMVStruct], Reactive[FullMVStruct]] = {
+    val state = new NonblockingSkipListVersionHistory[P, FullMVTurn, ReSource[FullMVStruct], Reactive[FullMVStruct]](engine.dummy, valuePersistency)
     state.incrementFrame(this)
     state
   }
 
-  override protected def makeSourceStructState[P](valuePersistency: InitValues[P]): NodeVersionHistory[P, FullMVTurn, ReSource[FullMVStruct], Reactive[FullMVStruct]] = {
+  override protected def makeSourceStructState[P](valuePersistency: InitValues[P]): NonblockingSkipListVersionHistory[P, FullMVTurn, ReSource[FullMVStruct], Reactive[FullMVStruct]] = {
     val state = makeDerivedStructState(valuePersistency)
     val res = state.notify(this, changed = false)
     assert(res == NoSuccessor(Set.empty))
