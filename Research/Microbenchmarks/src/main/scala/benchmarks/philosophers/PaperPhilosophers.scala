@@ -277,7 +277,7 @@ object PaperPhilosophers {
     val execContext = scala.concurrent.ExecutionContext.fromExecutor(executor)
     val threads = for(i <- 0 until threadCount) yield Future { driver(i) }(execContext)
 
-    while(threads.exists(!_.isCompleted) && continue()) { Thread.sleep(10) }
+    while(threads.exists(!_.isCompleted) && !abort && continue()) { Thread.sleep(10) }
     val timeout = System.currentTimeMillis() + 3000
     val scores = threads.map{ t =>
       Try { Await.result(t, (timeout - System.currentTimeMillis()).millis ) }

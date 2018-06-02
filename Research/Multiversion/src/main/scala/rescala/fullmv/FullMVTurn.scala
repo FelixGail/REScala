@@ -63,7 +63,7 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
     val head = localTaskQueue.pollFirst()
     if(head != null) {
       assert(head.turn == this, s"local queue of $this contains different turn's $head")
-      head.compute()
+      head.doCompute()
       runLocalQueue()
     }
   }
