@@ -96,7 +96,7 @@ class NodeVersionHistoryTest extends FunSuite {
     assert(n.incrementFrame(framing2) === FramingBranchEnd) // End because earlier frame by reevaluate turn exists
 
     n.notify(reevaluate, changed = true)
-    n.retrofitSinkFrames(Seq.empty, Some(framing1), -1)
+    n.retrofitSinkFrames(Nil, Some(framing1), -1)
     assert(n.reevOut(reevaluate, Some(11)) === NoSuccessor(Set.empty))
 //    assert(n.reevOut(reevaluate, Some(Pulse.Value(11))) === FollowFraming(Set.empty, framing2))
 
