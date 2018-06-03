@@ -110,7 +110,16 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
         if(currentUnknownPredecessor.phase < newPhase) {
           if (registeredForWaiting != null) {
             if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] $this parking for $currentUnknownPredecessor.")
-            LockSupport.park(currentUnknownPredecessor)
+            val timeBefore = System.nanoTime()
+            LockSupport.parkNanos(currentUnknownPredecessor, 1000000000L)
+            val timeElapsed = System.nanoTime() - timeBefore
+            if(timeElapsed > 500000000L) {
+              System.err.println(if(externallyPushedTasks.get.isEmpty && currentUnknownPredecessor.phase < newPhase) {
+                s"${Thread.currentThread().getName} stalled waiting for transition to ${TurnPhase.toString(newPhase)} of $currentUnknownPredecessor"
+              } else {
+                s"${Thread.currentThread().getName} stalled due do missing wake-up after transition to ${TurnPhase.toString(newPhase)} of $currentUnknownPredecessor"
+              })
+            }
             if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] $this unparked with external queue ${externallyPushedTasks.get}.")
             awaitAndSwitchPhase0(firstUnknownPredecessorIndex, 0L, currentUnknownPredecessor)
           } else {

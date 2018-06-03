@@ -582,10 +582,19 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
     val stable = version.previousWriteIfStable
     if(stable == null) {
       if(NonblockingSkipListVersionHistory.DEBUG || FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] parking for $version.")
-      LockSupport.park(NonblockingSkipListVersionHistory.this)
+      val timeBefore = System.nanoTime()
+      LockSupport.parkNanos(NonblockingSkipListVersionHistory.this, 1000000000L)
+      val timeElapsed = System.nanoTime() - timeBefore
+      if(timeElapsed > 500000000L) {
+        System.err.println(if(version.previousWriteIfStable == null) {
+          s"${Thread.currentThread().getName} stalled waiting for transition to stable of $version; current state is:\r\n" + toString()
+        } else {
+          s"${Thread.currentThread().getName} stalled due do missing wake-up after transition to stable of $version; current state is:\r\n" + toString()
+        })
+      }
       sleepForStable(version)
     } else {
-      if(NonblockingSkipListVersionHistory.DEBUG) println(s"[${Thread.currentThread().getName}] unparked on stable $version")
+      if(NonblockingSkipListVersionHistory.DEBUG || FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] unparked on stable $version")
       version.sleeping = false
       stable
     }
@@ -851,6 +860,27 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
       waiting
     } else {
       null
+    }
+  }
+
+  override def toString: String = toString(null, null)
+
+  @tailrec private def toString(builder: StringBuilder, current: QueuedVersion): String = {
+    if(builder == null) {
+      val builder = new StringBuilder(s"[Before] firstFrame = ").append(firstFrame).append(", outgoings = ").append(outgoings)
+      toString(builder, laggingLatestStable.get)
+    } else if(current == null) {
+      builder.append("\r\n[After] firstFrame = ").append(firstFrame).append(", outgoings = ").append(outgoings).toString()
+    } else {
+      builder.append("\r\n")
+      builder.append(current)
+      val next = current.get()
+      if(next == current) {
+        // fell of the list
+        toString(null, null)
+      } else {
+        toString(builder, next)
+      }
     }
   }
 }

@@ -242,7 +242,7 @@ object PaperPhilosophers {
     val duration = if(args.length >= 3) Integer.parseInt(args(2)) else 0
 
     implicit val engine = new rescala.fullmv.FullMVEngine(s"PaperPhilosophers($tableSize,$threadCount)")
-    val table = new PaperPhilosophers(tableSize, engine, Dynamicity.Dynamic) with NoTopper[rescala.fullmv.FullMVStruct]
+    val table = new PaperPhilosophers(tableSize, engine, Dynamicity.Dynamic) with SignalPyramidTopper[rescala.fullmv.FullMVStruct]
 //    implicit val engine = rescala.levelbased.LevelBasedPropagationEngines.unmanaged
 //    val table = new PaperPhilosophers(tableSize, engine, Dynamicity.Static) with NoTopper[rescala.levelbased.SimpleStruct] with ManualLocking[rescala.levelbased.SimpleStruct]
 
@@ -268,6 +268,7 @@ object PaperPhilosophers {
         localCount
       } catch {
         case t: Throwable =>
+          println(s"Thread $idx setting abort after error!")
           abort = true
           throw t
       }
