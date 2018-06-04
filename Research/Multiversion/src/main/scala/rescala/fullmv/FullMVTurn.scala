@@ -111,10 +111,9 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
           if (registeredForWaiting != null) {
             if (FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] $this parking for $currentUnknownPredecessor.")
             val timeBefore = System.nanoTime()
-            LockSupport.parkNanos(currentUnknownPredecessor, 10000000000L)
-            val timeElapsed = System.nanoTime() - timeBefore
-            if(timeElapsed > 5000000000L) {
-              System.err.println(if(externallyPushedTasks.get.isEmpty && currentUnknownPredecessor.phase < newPhase) {
+            LockSupport.parkNanos(currentUnknownPredecessor, 1000000000L)
+            if (System.nanoTime() - timeBefore > 500000000L) {
+              throw new Exception(if(externallyPushedTasks.get.isEmpty && currentUnknownPredecessor.phase < newPhase) {
                 s"${Thread.currentThread().getName} stalled waiting for transition to ${TurnPhase.toString(newPhase)} of $currentUnknownPredecessor"
               } else {
                 s"${Thread.currentThread().getName} stalled due do missing wake-up after transition to ${TurnPhase.toString(newPhase)} of $currentUnknownPredecessor"
@@ -221,6 +220,7 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
   //========================================================Ordering Search and Establishment Interface============================================================
 
   def isTransitivePredecessor(txn: FullMVTurn): Boolean = {
+    assert(txn != this, s"callee $this == parameter $txn -- this should be excluded beforehand, as isTransitivePredecessor is reflexive, which can easily lead to wrong assumptions.")
     predecessorSpanningTreeNodes.contains(txn)
   }
 

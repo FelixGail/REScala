@@ -285,20 +285,21 @@ object PaperPhilosophers {
     }
     executor.shutdown()
 
-    println("Philosophers done. Individual scores:")
-    println("\t" + scores.zipWithIndex.map { case (count, idx) => idx + ": " + count }.mkString("\n\t"))
-    scores.find {
-      case Failure(ex: TimeoutException) => false
-      case Failure(_) => true
-      case Success(_) => false
-    }.asInstanceOf[Option[Failure[_]]].foreach {
-      case Failure(ex) =>
-        ex.printStackTrace()
-    }
     if(scores.exists(_.isFailure)) {
-      println("There were failures -> not accessing total score")
+      println("Philosophers done with failures, listing non-timeouts:")
+      scores.zipWithIndex.foreach {
+        case (Failure(_: TimeoutException), _) => // ignore
+        case (f@Failure(ex), idx) =>
+          System.err.print(f"$idx%4d: ")
+          ex.printStackTrace()
+        case (Success(_), _) => // ignore
+      }
+      println("There were failures -> not accessing total score; individual threads summary:")
+      println("\t" + scores.zipWithIndex.map { case (count, idx) => idx + ": " + count }.mkString("\n\t"))
     } else {
+      println("Philosophers done. Individual threads' scores:")
       val individualsSum = scores.map(_.get).sum
+      println("\t" + scores.zipWithIndex.map { case (count, idx) => idx + ": " + count }.mkString("\n\t"))
       if(table.total == individualsSum){
         println("Total score: " + table.total + " (matches individual scores' sum)")
       } else {
