@@ -583,11 +583,11 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
     if(stable == null) {
       if(NonblockingSkipListVersionHistory.DEBUG || FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] parking for $version.")
       val timeBefore = System.nanoTime()
-      LockSupport.parkNanos(NonblockingSkipListVersionHistory.this, 1000000000L)
+      LockSupport.parkNanos(NonblockingSkipListVersionHistory.this, 10000000000L)
       val timeElapsed = System.nanoTime() - timeBefore
-      if(timeElapsed > 500000000L) {
+      if(timeElapsed > 5000000000L) {
         System.err.println(if(version.previousWriteIfStable == null) {
-          s"${Thread.currentThread().getName} stalled waiting for transition to stable of $version; current state is:\r\n" + toString()
+          s"${Thread.currentThread().getName} stalled waiting for transition to stable of $version \r\n${Thread.currentThread().getStackTrace.mkString("\r\n\tat ")}\r\nwith state " + toString()
         } else {
           s"${Thread.currentThread().getName} stalled due do missing wake-up after transition to stable of $version; current state is:\r\n" + toString()
         })
@@ -709,7 +709,7 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
     // should some method be introduced that executes a discover WITHOUT a prior staticAfter,
     // then this method needs the same protection current implemented in drop(txn, x).
     assert(stableVersionExists(txn, null), s"trailing discover without existing version by $txn?")
-    computeRetrofit(txn, synchronized {
+    computeRetrofit(txn, add, synchronized {
       outgoings += add
       (laggingLatestStable.get, firstFrame)
     })
@@ -772,16 +772,16 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
 
   def drop(txn: T, remove: OutDep): (List[T], Option[T]) = synchronized {
     protectTrailingRead(txn)
-    computeRetrofit(txn, synchronized {
+    computeRetrofit(txn, remove, synchronized {
       outgoings -= remove
       (laggingLatestStable.get, firstFrame)
     })
   }
 
-  private def computeRetrofit(txn: T, latestStableAndFirstFrame: (QueuedVersion, QueuedVersion)): (List[T], Option[T]) = {
+  private def computeRetrofit(txn: T, sink: OutDep, latestStableAndFirstFrame: (QueuedVersion, QueuedVersion)): (List[T], Option[T]) = {
     val maybeFirstFrame = latestStableAndFirstFrame._2
     val frame = if(maybeFirstFrame != null) {
-      assert(maybeFirstFrame.txn.isTransitivePredecessor(txn), s"can only retrofit into the past, but $txn is in the future of firstframe $maybeFirstFrame!")
+      assert(maybeFirstFrame.txn.isTransitivePredecessor(txn), s"can only retrofit into the past, but $txn isn't before $maybeFirstFrame. Reverse is ${txn.isTransitivePredecessor(maybeFirstFrame.txn)}.\r\nSource (this) state is: $this\r\nSink $sink state is: ${sink.asInstanceOf[rescala.core.Reactive[FullMVStruct]].state}")
       Some(maybeFirstFrame.txn)
     } else {
       None
@@ -872,7 +872,7 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
     } else if(current == null) {
       builder.append("\r\n[After] firstFrame = ").append(firstFrame).append(", outgoings = ").append(outgoings).toString()
     } else {
-      builder.append("\r\n")
+      builder.append("\r\n\t")
       builder.append(current)
       val next = current.get()
       if(next == current) {
