@@ -29,8 +29,7 @@ object NotificationResultAction {
   // upon reevOut:
   //    done/FF/next
   case object NotGlitchFreeReady extends NotificationResultAction[Nothing, Nothing]
-  case object ResolvedNonFirstFrameToUnchanged extends NotificationResultAction[Nothing, Nothing]
-  case object GlitchFreeReadyButQueued extends NotificationResultAction[Nothing, Nothing]
+  case object ChangedSomethingInQueue extends NotificationResultAction[Nothing, Nothing]
   case object GlitchFreeReady extends NotificationResultAction[Nothing, Nothing]
   sealed trait ReevOutResult[+T, +R]
   case object Glitched extends ReevOutResult[Nothing, Nothing]
@@ -893,11 +892,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
           progressToNextWriteForNotification(version, version.lastWrittenPredecessorIfStable)
         }
       } else {
-        if (version.changed > 0) {
-          NotificationResultAction.GlitchFreeReadyButQueued
-        } else {
-          NotificationResultAction.ResolvedNonFirstFrameToUnchanged
-        }
+        NotificationResultAction.ChangedSomethingInQueue
       }
     } else {
       NotificationResultAction.NotGlitchFreeReady

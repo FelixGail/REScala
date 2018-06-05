@@ -28,7 +28,7 @@ abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Schedul
   case object Thinking extends Philosopher
 
   val phils = for (idx <- 0 until size) yield
-    REName.named(s"phil($idx)") { implicit ! =>
+    REName.named(s"phil(${idx+1})") { implicit ! =>
       Var[Philosopher](Thinking)
     }
 
@@ -39,14 +39,14 @@ abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Schedul
   case class Taken(by: Int) extends Fork
 
   val forks = for (idx <- 0 until size) yield
-    REName.named(s"fork($idx)") { implicit ! =>
+    REName.named(s"fork(${idx+1})") { implicit ! =>
       Signal.dynamic[Fork] {
         val nextIdx = (idx + 1) % size
         (phils(idx)(), phils(nextIdx)()) match {
           case (Thinking, Thinking) => Free
           case (Eating, Thinking) => Taken(idx)
           case (Thinking, Eating) => Taken(nextIdx)
-          case (Eating, Eating) => throw new AssertionError(s"fork $idx double use")
+          case (Eating, Eating) => throw new AssertionError(s"fork ${idx+1} double use")
         }
       }
     }
@@ -61,7 +61,7 @@ abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Schedul
 
   // Dynamic Sight
   val sights = for (avoidStaticOptimization <- 0 until size) yield
-    REName.named(s"sight($avoidStaticOptimization)") { implicit ! =>
+    REName.named(s"sight(${avoidStaticOptimization+1})") { implicit ! =>
       dynamicity match {
         case Dynamicity.Dynamic => Signal.dynamic[Sight] {
           val idx = avoidStaticOptimization
@@ -74,7 +74,7 @@ abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Schedul
               }
             case Taken(by) =>
               if (by == idx) {
-                assert(forks(idx)() == Taken(idx), s"sight $idx glitched")
+                assert(forks(idx)() == Taken(idx), s"sight ${idx+1} glitched")
                 Done
               } else {
                 Blocked(by)
@@ -103,10 +103,10 @@ abstract class PaperPhilosophers[S <: Struct](val size: Int, val engine: Schedul
       case (Taken(left), Taken(right)) if left == idx && right == idx =>
         Done
       case (Taken(by), _) =>
-        assert(by != idx, s"sight $idx glitched 1")
+        assert(by != idx, s"sight ${idx+1} glitched 1")
         Blocked(by)
       case (_, Taken(by)) =>
-        assert(by != idx, s"sight $idx glitched 2")
+        assert(by != idx, s"sight ${idx+1} glitched 2")
         Blocked(by)
     }
   }
@@ -170,9 +170,9 @@ trait IndividualCounts[S <: Struct] {
   import engine._
 
   val individualCounts: Seq[Signal[Int]] =
-    for (i <- 0 until size) yield
-      REName.named(s"count($i)") { implicit ! =>
-        successes(i).fold(0) { (acc, _) => acc + 1 }
+    for (idx <- 0 until size) yield
+      REName.named(s"count(${idx+1})") { implicit ! =>
+        successes(idx).fold(0) { (acc, _) => acc + 1 }
       }
 }
 
@@ -268,7 +268,7 @@ object PaperPhilosophers {
         localCount
       } catch {
         case t: Throwable =>
-          println(s"Thread $idx setting abort after error!")
+          println(s"Thread ${idx+1} setting abort after error!")
           abort = true
           throw t
       }
@@ -286,20 +286,21 @@ object PaperPhilosophers {
     executor.shutdown()
 
     if(scores.exists(_.isFailure)) {
-      println("Philosophers done with failures, listing non-timeouts:")
+      println("Philosophers done with failures:")
       scores.zipWithIndex.foreach {
-        case (Failure(_: TimeoutException), _) => // ignore
+        case (Failure(_: TimeoutException), idx) =>
+          System.err.println(f"${idx+1}%4d: timed out")
         case (f@Failure(ex), idx) =>
-          System.err.print(f"$idx%4d: ")
+          System.err.print(f"${idx+1}%4d: ")
           ex.printStackTrace()
         case (Success(_), _) => // ignore
       }
       println("There were failures -> not accessing total score; individual threads summary:")
-      println("\t" + scores.zipWithIndex.map { case (count, idx) => idx + ": " + count }.mkString("\n\t"))
+      println("\t" + scores.zipWithIndex.map { case (count, idx) => (idx+1) + ": " + count }.mkString("\n\t"))
     } else {
       println("Philosophers done. Individual threads' scores:")
       val individualsSum = scores.map(_.get).sum
-      println("\t" + scores.zipWithIndex.map { case (count, idx) => idx + ": " + count }.mkString("\n\t"))
+      println("\t" + scores.zipWithIndex.map { case (count, idx) => (idx+1) + ": " + count }.mkString("\n\t"))
       if(table.total == individualsSum){
         println("Total score: " + table.total + " (matches individual scores' sum)")
       } else {

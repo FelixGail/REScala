@@ -278,6 +278,7 @@ lazy val cfg = new {
     "-feature",
     "-Xlint",
     "-Xfuture",
+//    "-Xdisable-assertions"
   )
 
   lazy val strictScalac = Compile / compile / scalacOptions ++= List(

@@ -3,7 +3,7 @@ package tests.rescala.fullmv
 import org.scalatest.FunSuite
 import rescala.core.Initializer
 import rescala.fullmv.FramingBranchResult.{Frame, FramingBranchEnd}
-import rescala.fullmv.NotificationResultAction.{GlitchFreeReady, GlitchFreeReadyButQueued, NotGlitchFreeReady}
+import rescala.fullmv.NotificationResultAction.{ChangedSomethingInQueue, GlitchFreeReady, NotGlitchFreeReady}
 import rescala.fullmv.NotificationResultAction.NotificationOutAndSuccessorOperation.{NextReevaluation, NoSuccessor}
 import rescala.fullmv._
 
@@ -62,7 +62,7 @@ class NodeVersionHistoryTest extends FunSuite {
     assert(n.incrementFrame(turn3) === FramingBranchEnd)
     turn3.completeFraming()
 
-    assert(n.notify(turn3, changed = true) === GlitchFreeReadyButQueued)
+    assert(n.notify(turn3, changed = true) === ChangedSomethingInQueue)
     assert(n.notify(turn2, changed = false) === NextReevaluation(Set.empty, turn3))
     assert(n.reevIn(turn3) === 10)
     assert(n.reevOut(turn3, Some(5)) === NoSuccessor(Set.empty))
