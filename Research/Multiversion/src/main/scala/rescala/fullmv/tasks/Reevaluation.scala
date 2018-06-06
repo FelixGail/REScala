@@ -86,11 +86,11 @@ trait ReevaluationHandling[N <: ReSource[FullMVStruct]] extends FullMVAction {
       }
       maybeChange.get.asInstanceOf[Pulse.Exceptional].throwable.printStackTrace()
     }
+    if(FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] Reevaluation($turn,$node) => ${if(maybeChange.isDefined) "changed" else "unchanged"} $reevOutResult")
     reevOutResult
   }
 
   def processReevOutResult(outAndSucc: ReevOutResult[FullMVTurn, Reactive[FullMVStruct]], changed: Boolean): Unit = {
-    if(FullMVEngine.DEBUG) println(s"[${Thread.currentThread().getName}] Reevaluation($turn,$node) => ${if(changed) "changed" else "unchanged"} $outAndSucc")
     outAndSucc match {
       case Glitched =>
         // do nothing, reevaluation will be repeated at a later point
