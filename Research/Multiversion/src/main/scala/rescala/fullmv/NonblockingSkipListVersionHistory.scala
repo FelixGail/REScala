@@ -622,7 +622,13 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
   @tailrec final def awaitStableDynamicRead(txn: T, assertSleepingAllowed: Boolean = true, assertInsertAllowed: Boolean = true): QueuedVersion = {
     val ls = laggingLatestStable.get()
     if(ls.txn == txn || ls.txn.isTransitivePredecessor(txn)) {
-      null
+      var ownOrPredecessor = ls
+      // start at latest write
+      if(ownOrPredecessor.value == Unwritten) ownOrPredecessor = ownOrPredecessor.previousWriteIfStable
+      // hop back in time over all writes that are considered in the future of txn
+      while(ownOrPredecessor.txn != txn && (ownOrPredecessor.txn.isTransitivePredecessor(txn) || !NonblockingSkipListVersionHistory.tryFixPredecessorOrderIfNotFixedYet(ownOrPredecessor.txn, txn)))
+        ownOrPredecessor = ownOrPredecessor.previousWriteIfStable
+      ownOrPredecessor
     } else {
       val versionInQueue = enqueueReading(txn, ls, assertInsertAllowed)
       if(versionInQueue == null) {
@@ -650,23 +656,15 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
     *         own writes.
     */
   def dynamicBefore(txn: T): V = try {
-    val stabilizedVersion = awaitStableDynamicRead(txn)
-    if(stabilizedVersion == null) {
-      // start at latest stable
-      var predecessor = laggingLatestStable.get
-      if(NonblockingSkipListVersionHistory.DEBUG && NonblockingSkipListVersionHistory.TRACE_VALUES) println(s"[${Thread.currentThread().getName}] dynamicBefore for $txn searching history starting from $predecessor")
-      // hop back in time, ignoring all writes that are considered in the future of txn or of txn itself
-      while(predecessor.txn == txn || predecessor.txn.isTransitivePredecessor(txn) || !NonblockingSkipListVersionHistory.tryFixPredecessorOrderIfNotFixedYet(predecessor.txn, txn))
-        predecessor = predecessor.previousWriteIfStable
-      val res = predecessor.readForFuture
-      perThreadReadTracker.set(() => s"dynamicBefore for $txn through backlog ended on $predecessor, returning $res")
-      res
+    val stableOwnOrPredecessor = awaitStableDynamicRead(txn)
+    val res = if(stableOwnOrPredecessor.txn == txn) {
+      stableOwnOrPredecessor.previousWriteIfStable.readForFuture
     } else {
-      val res = stabilizedVersion.previousWriteIfStable.readForFuture
-      if(NonblockingSkipListVersionHistory.TRACE_VALUES) println(s"[${Thread.currentThread().getName}] dynamicBefore for $txn ended on $stabilizedVersion, returning $res")
-      perThreadReadTracker.set(() => s"dynamicBefore for $txn through queue ended on $stabilizedVersion, returning $res")
-      res
+      stableOwnOrPredecessor.readForFuture
     }
+    if(NonblockingSkipListVersionHistory.TRACE_VALUES) println(s"[${Thread.currentThread().getName}] dynamicBefore for $txn ended on $stableOwnOrPredecessor, returning $res")
+    perThreadReadTracker.set(() => s"dynamicBefore for $txn ended on $stableOwnOrPredecessor, returning $res")
+    res
   } catch {
     case t: Throwable =>
       val e = new Exception("staticAfter failed; printing because reevaluation will probably eat the result:", t)
@@ -690,7 +688,7 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
           } else if(ff == null || ff.txn.isTransitivePredecessor(version._1.txn)) {
             throw new Exception(s"${Thread.currentThread().getName} got stuck on $version -> dropped but unstable $version with state $this")
           } else {
-            System.err.println(s"[WARNING] ${Thread.currentThread().getName} stalled waiting for transition to stable of $version\r\n[WARNING] with state $this\r\n[WARNING]\tat ${Thread.currentThread().getStackTrace.mkString("\r\n[WARNING]\tat ")}")
+//            System.err.println(s"[WARNING] ${Thread.currentThread().getName} stalled waiting for transition to stable of $version\r\n[WARNING] with state $this\r\n[WARNING]\tat ${Thread.currentThread().getStackTrace.mkString("\r\n[WARNING]\tat ")}")
           }
         } else {
           throw new Exception(s"${Thread.currentThread().getName} did not receive wake-up call after transition to stable of $version with state $this")
@@ -728,33 +726,19 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
     *         transaction's own write if one has occurred or will occur.
     */
   def dynamicAfter(txn: T): V = try {
-    val stableVersion = awaitStableDynamicRead(txn)
-    if(stableVersion == null) {
-      var ownOrPredecessor = laggingLatestStable.get
-      if(NonblockingSkipListVersionHistory.DEBUG && NonblockingSkipListVersionHistory.TRACE_VALUES) println(s"[${Thread.currentThread().getName}] dynamicAfter for $txn searching history starting from $ownOrPredecessor")
-      // start at latest write
-      if(ownOrPredecessor.value == Unwritten) ownOrPredecessor = ownOrPredecessor.previousWriteIfStable
-      // hop back in time over all writes that are considered in the future of txn
-      while(ownOrPredecessor.txn != txn && (ownOrPredecessor.txn.isTransitivePredecessor(txn) || !NonblockingSkipListVersionHistory.tryFixPredecessorOrderIfNotFixedYet(ownOrPredecessor.txn, txn)))
-        ownOrPredecessor = ownOrPredecessor.previousWriteIfStable
-      // dispatch read
-      val res = if(ownOrPredecessor.txn == txn) {
-        ownOrPredecessor.readForSelf
+    val stableOwnOrPredecessor = awaitStableDynamicRead(txn)
+    val res = if(stableOwnOrPredecessor.txn == txn) {
+      if(stableOwnOrPredecessor.value != Unwritten) {
+        stableOwnOrPredecessor.readForSelf
       } else {
-        ownOrPredecessor.readForFuture
+        stableOwnOrPredecessor.previousWriteIfStable.readForFuture
       }
-      perThreadReadTracker.set(() => s"dynamicAfter for $txn through backlog ended on $ownOrPredecessor, returning $res")
-      res
     } else {
-      val res = if(stableVersion.value != Unwritten) {
-        stableVersion.readForSelf
-      } else {
-        stableVersion.previousWriteIfStable.readForFuture
-      }
-      if(NonblockingSkipListVersionHistory.TRACE_VALUES) println(s"[${Thread.currentThread().getName}] dynamicAfter for $txn ended on $stableVersion, returning $res")
-      perThreadReadTracker.set(() => s"dynamicAfter for $txn through queue ended on $stableVersion, returning $res")
-      res
+      stableOwnOrPredecessor.readForFuture
     }
+    if(NonblockingSkipListVersionHistory.TRACE_VALUES) println(s"[${Thread.currentThread().getName}] dynamicAfter for $txn ended on $stableOwnOrPredecessor, returning $res")
+    perThreadReadTracker.set(() => s"dynamicAfter for $txn ended on $stableOwnOrPredecessor, returning $res")
+    res
   } catch {
     case t: Throwable =>
       val e = new Exception("dynamicAfter failed; printing because reevaluation will probably eat the result:", t)

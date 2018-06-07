@@ -196,6 +196,7 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
 //    resetStatistics()
     awaitAndSwitchPhase(TurnPhase.Completed)
     predecessorSpanningTreeNodes = Map.empty
+    successorsIncludingSelf = null
     selfNode = null
 //    FullMVTurn.execsync.synchronized {
 //      val maybeCount1 = FullMVTurn.spinSwitchStatsExecuting.get(spinSwitch)
@@ -273,7 +274,16 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
     }
   }
 
-  def newSuccessor(successor: FullMVTurn): Unit = successorsIncludingSelf = successor :: successorsIncludingSelf
+  def newSuccessor(successor: FullMVTurn): Unit = {
+    val before = successorsIncludingSelf
+    if(before != null) {
+      // this isn't thread-safe in that it may overwrite concurrent changes unnoticed.
+      // that doesn't matter though, as accesses are synchronized except for turn completion,
+      // which writes null to support garbage collection, and if the change to null is overwritten
+      // by a racing ordering relation establishment occasionally, this doesn't hurt.
+      successorsIncludingSelf = successor :: before
+    }
+  }
 
   def asyncReleasePhaseLock(): Unit = phaseLock.readLock().unlock()
 
