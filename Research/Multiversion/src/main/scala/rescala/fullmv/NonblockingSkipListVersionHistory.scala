@@ -835,11 +835,12 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
   // =================== DYNAMIC OPERATIONS ====================
 
   @elidable(elidable.ASSERTION)
-  @tailrec private def assertFinalVersionExists(txn: T, current: QueuedVersion): Unit = {
+  private def assertFinalVersionExists(txn: T, current: QueuedVersion): Unit = assertFinalVersionExists0(txn, current)
+  @tailrec private def assertFinalVersionExists0(txn: T, current: QueuedVersion): Unit = {
     if (current == null) {
       val ls = laggingLatestStable.get()
       if (ls.txn == txn || txn.isTransitivePredecessor(ls.txn) || ls.txn.phase == TurnPhase.Completed) {
-        assertFinalVersionExists(txn, ls)
+        assertFinalVersionExists0(txn, ls)
       } else {
         assert(ls.txn.isTransitivePredecessor(txn), s"trying to look for $txn encountered unordered latestStable $ls; read tracker says ${perThreadReadTracker.get()()}")
       }
@@ -855,10 +856,10 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
       val next = current.get
       if (next == current) {
         // search fell off the list, restart
-        assertFinalVersionExists(txn, null)
+        assertFinalVersionExists0(txn, null)
       } else {
         assert(next != null, s"reached end of list without finding version of $txn; read tracker says ${perThreadReadTracker.get()()}")
-        assertFinalVersionExists(txn, next)
+        assertFinalVersionExists0(txn, next)
       }
     }
   }
