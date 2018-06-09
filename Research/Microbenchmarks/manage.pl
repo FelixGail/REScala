@@ -40,7 +40,7 @@ my @STEPS = (1,8,16,24,32,64);
 my @SIZES = (100);
 my @CHATSERVERSIZES = (4,8,16,32);
 
-my @PHILOSOPHERS = (-4, 16, 32, 64, 128);
+my @PHILOSOPHERS = (-4, 16, 64);
 # my @PHILOSOPHERS = (64);
 
 my @BUSYS = ("false");
@@ -175,7 +175,8 @@ sub selection {
 
       for my $busy (@BUSYS) {
         for my $threads (@THREADS) {
-          for my $dynamicity (@DYNAMICITIES) {
+          # for my $dynamicity (@DYNAMICITIES) {
+          for my $dynamicity ("dynamic") {
             my $name = "paperphils-busy-$busy-threads-$threads-dynamicity-$dynamicity-signaltopper-16";
             my $program = makeRunString( $name,
               fromBaseConfig(
@@ -231,47 +232,40 @@ sub selection {
     asdf => sub {
       my @runs;
 
-      for my $threads (8,16) {
-        for my $work (0,100,200,400,800,1600,3200) {
-          my $name0 = "plainwork-threads-$threads-work-$work";
-          my $program0 = makeRunString( $name0,
-            fromBaseConfig(
-              p => { # parameters
-                work => $work,
-              },
-              t => $threads, #threads
-            ),
-            "simple.PlainWork"
-          );
-          push @runs, {name => $name0, program => $program0};
+      for my $threads (@THREADS) {
+        # 400 units work ~ 1us CPU core time
+        for my $work (0,800,2000,4000) { # 0, 2us, 5us, 10us
+#          my $name0 = "plainwork-threads-$threads-work-$work";
+#          my $program0 = makeRunString( $name0,
+#            fromBaseConfig(
+#              p => { # parameters
+#                work => $work,
+#              },
+#              t => $threads, #threads
+#            ),
+#            "simple.PlainWork"
+#          );
+#          push @runs, {name => $name0, program => $program0};
 
-          my $name = "chain-threads-$threads-work-$work";
-          my $program = makeRunString( $name,
-            fromBaseConfig(
-              p => { # parameters
-                work => $work,
-                engineName => (join ',', @ENGINES),
-                size => $threads,
-              },
-              t => $threads, #threads
-            ),
-            "simple.SingleChainSignal"
-          );
-          push @runs, {name => $name, program => $program};
-
-          my $name2 = "fan-threads-$threads-work-$work";
-          my $program2 = makeRunString( $name2,
-            fromBaseConfig(
-              p => { # parameters
-                work => $work,
-                engineName => (join ',', @ENGINES),
-                size => $threads,
-              },
-              t => $threads, #threads
-            ),
-            "simple.Fan"
-          );
-          push @runs, {name => $name2, program => $program2};
+#          for my $wd ([0, 0], [16, 1], [4, 4], [1, 16]) {
+          for my $wd ([0, 0], [4, 4], [1, 16]) {
+            my $width = $wd->[0];
+            my $depth = $wd->[1];
+            my $name = "signalmapgrid-w-$width-d-$depth-threads-$threads-work-$work";
+            my $program = makeRunString( $name,
+              fromBaseConfig(
+                p => { # parameters
+                  work => $work,
+                  engineName => (join ',', @ENGINES),
+                  width => $width,
+                  depth => $depth
+                },
+                t => $threads, #threads
+              ),
+              "simple.SignalMapGrid"
+            );
+            push @runs, {name => $name, program => $program};
+          }
         }
       }
 
@@ -546,17 +540,20 @@ sub selection {
     singleVarWrite => sub {
       my @runs;
 
-      for my $threads (@REDUCED_THREADS) {
+      for my $threads (@THREADS) {
           my $name = "singleVarWrite-threads-$threads";
           my $program = makeRunString( $name,
             fromBaseConfig(
               p => { # parameters
-                engineName => (join ',', @ENGINES_UNMANAGED),
+                work => 0,
+                engineName => (join ',', @ENGINES),
+                width => 0,
+                depth => 0
               },
-              t => $threads,
+              t => $threads, #threads
             ),
-            "basic.SingleVar.write"
-          );
+            "simple.SignalMapGrid"
+           );
           push @runs, {name => $name, program => $program};
       }
 
@@ -711,21 +708,48 @@ sub selection {
       @runs;
     },
 
+    serialtransactions => sub {
+      my @runs;
+
+      for my $threads (@THREADS) {
+        for my $work (0, 1000, 2500, 5000) {
+          my $name = "serialtransactions-threads-$threads-work-$work";
+          my $program = makeRunString( $name,
+            fromBaseConfig(
+              p => { # parameters
+                engineName => (join ',', @ENGINES),
+                size => 16,
+                work => $work,
+              },
+              t => $threads,
+            ),
+            "benchmarks.simple.LowContentionSerialOrder"
+          );
+          push @runs, {name => $name, program => $program};
+        }
+      }
+
+      @runs;
+    },
+
     simpleReverseFan => sub {
       my @runs;
 
       for my $threads (@THREADS) {
-          my $name = "simpleReverseFan-threads-$threads";
+        for my $work (0, 12800, 32000, 64000) { 
+          my $name = "simpleReverseFan-threads-$threads-work-$work";
           my $program = makeRunString( $name,
             fromBaseConfig(
               p => { # parameters
-                engineName => (join ',', @ENGINES_UNMANAGED),
+                engineName => (join ',', @ENGINES),
+                work => $work,
               },
               t => $threads,
             ),
             "benchmarks.simple.ReverseFan"
           );
           push @runs, {name => $name, program => $program};
+        }
       }
 
       @runs;
