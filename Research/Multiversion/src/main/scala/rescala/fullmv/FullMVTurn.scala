@@ -123,16 +123,13 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
             awaitAndSwitchPhase0(firstUnknownPredecessorIndex, 0L, currentUnknownPredecessor)
           } else {
             val now = System.nanoTime()
-            val parkTimeSet = parkAfter > 0L
-            if(parkTimeSet && now > parkAfter) {
+            val parkAfter2 = if(parkAfter > 0) parkAfter else now + FullMVTurn.PARK_AFTER
+            if(now > parkAfter2) {
               currentUnknownPredecessor.waiters.put(this.userlandThread, newPhase)
               awaitAndSwitchPhase0(firstUnknownPredecessorIndex, 0L, currentUnknownPredecessor)
             } else {
-              val end = now + FullMVTurn.CONSTANT_BACKOFF
-              do {
-                Thread.`yield`()
-              } while (System.nanoTime() < end)
-              awaitAndSwitchPhase0(firstUnknownPredecessorIndex, if(parkTimeSet) parkAfter else now + FullMVTurn.MAX_BACKOFF, null)
+              Thread.`yield`()
+              awaitAndSwitchPhase0(firstUnknownPredecessorIndex, parkAfter2, null)
             }
           }
         } else {
@@ -365,8 +362,7 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
 }
 
 object FullMVTurn {
-  val CONSTANT_BACKOFF = 7500L // 7.5µs
-  val MAX_BACKOFF = 100000L // 100µs
+  val PARK_AFTER = 100000L // 100µs
 
 //  object framesync
 //  var spinSwitchStatsFraming = new java.util.HashMap[Int, java.lang.Long]()

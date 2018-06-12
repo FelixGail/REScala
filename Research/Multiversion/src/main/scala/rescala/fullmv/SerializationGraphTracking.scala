@@ -37,7 +37,6 @@ object SerializationGraphTracking /*extends LockContentionTimer*/ {
 //          entered()
           LockedSameSCC(contender.engine.lock)
         } else {
-          Thread.`yield`()
           somethingUnlocked
         }
     }

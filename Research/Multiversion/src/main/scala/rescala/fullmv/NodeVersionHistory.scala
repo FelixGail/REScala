@@ -613,6 +613,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
           (Succeeded, x)
         }
       case otherwise =>
+        Thread.`yield`()
         if (attemptPredecessor.phase == TurnPhase.Completed) {
           assert(predPos >= 0, s"supposed-to-be predecessor $attemptPredecessor completed this having been assumed impossible")
           if(predPos < 0) throw new AssertionError(s"supposed-to-be predecessor $attemptPredecessor completed this having been assumed impossible")
@@ -662,6 +663,7 @@ class NodeVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init: T, val valuePe
         ensurePredecessorRelationRecordedUnderLock(predecessor, predPos, successor)
         x
       case otherwise =>
+        Thread.`yield`()
         if (predecessor.phase == TurnPhase.Completed) {
           assert(predPos >= 0, s"supposed-to-be predecessor $predecessor completed this having been assumed impossible")
           if(predPos < 0) throw new AssertionError(s"supposed-to-be predecessor $predecessor completed this having been assumed impossible")
