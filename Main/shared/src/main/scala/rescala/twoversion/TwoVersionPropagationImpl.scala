@@ -30,11 +30,11 @@ trait TwoVersionPropagationImpl[S <: TwoVersionStruct] extends TwoVersionPropaga
 
   def observe(f: () => Unit): Unit = observers += f
 
-  override def commitPhase(): Unit = toCommit.foreach{_.commit(this)}
+  override def commitPhase(): Unit = toCommit.foreach{_.commit()}
 
   override def rollbackPhase(): Unit = {
     val it = toCommit.iterator
-    while (it.hasNext) it.next().release(this)
+    while (it.hasNext) it.next().release()
   }
 
   override def observerPhase(): Unit = {
@@ -72,18 +72,18 @@ trait TwoVersionPropagationImpl[S <: TwoVersionStruct] extends TwoVersionPropaga
 
 
   override private[rescala] def makeAdmissionPhaseTicket(initialWrites: Set[ReSource[S]]) = new AdmissionTicket[S](this, initialWrites) {
-    override def access[A](reactive: Signal[A, S]) = {
+    override def access[A](reactive: Signal[A, S]): reactive.Value = {
       dynamicDependencyInteraction(reactive)
       reactive.state.base(token)
     }
   }
   private[rescala] def makeDynamicReevaluationTicket[V, N](b: V): ReevTicket[V, S] = new ReevTicket[V, S](this, b) {
-    override def dynamicAccess(reactive: ReSource[S]) = TwoVersionPropagationImpl.this.dynamicAfter(reactive)
-    override def staticAccess(reactive: ReSource[S]) = reactive.state.get(token)
+    override def dynamicAccess(reactive: ReSource[S]): reactive.Value = TwoVersionPropagationImpl.this.dynamicAfter(reactive)
+    override def staticAccess(reactive: ReSource[S]): reactive.Value = reactive.state.get(token)
   }
 
   private[rescala] def makeWrapUpPhaseTicket(): WrapUpTicket[S] = new WrapUpTicket[S] {
-    override def access(reactive: ReSource[S]) = TwoVersionPropagationImpl.this.dynamicAfter(reactive)
+    override def access(reactive: ReSource[S]): reactive.Value = TwoVersionPropagationImpl.this.dynamicAfter(reactive)
   }
 
   private[rescala] def dynamicAfter[P](reactive: ReSource[S]) = {

@@ -16,19 +16,19 @@ lazy val rescalaAggregate = project.in(file(".")).settings(cfg.base).aggregate(
   caseStudyShapes,
   crdts,
   datastructures,
-  dividi,
+//  dividi,
   documentation,
   examples,
   examplesReswing,
   fullmv,
   //meta,
   microbench,
-  paroli,
+//  paroli,
   pongDemo,
   reactiveStreams,
   rescalaJS,
   rescalaJVM,
-  rescalafx,
+//  rescalafx,
   rescalatags,
   restoreJVM,
   restoreJS,
@@ -181,10 +181,10 @@ lazy val fullmv = project.in(file("Research/Multiversion"))
     cfg.test, cfg.noPublish, exportJars := true)
   .dependsOn(rescalaJVM, testsJVM % "test->test")
 
-//lazy val distributedFullmv = project.in(file("Research/MultiversionDistribution"))
-//  .settings( cfg.base, name := "rescala-distributed-multiversion",
-//    cfg.test, cfg.noPublish, lib.circe, lib.retierTransmitter)
-//  .dependsOn(fullmv, testsJVM % "test->test")
+lazy val distributedFullmv = project.in(file("Research/MultiversionDistribution"))
+  .settings( cfg.base, name := "rescala-distributed-multiversion",
+    cfg.test, cfg.noPublish, lib.circe, lib.retierTransmitter)
+  .dependsOn(fullmv, testsJVM % "test->test")
 
 lazy val meta = project.in(file("Research/Meta"))
   .dependsOn(rescalaJVM)
@@ -203,7 +203,7 @@ lazy val microbench = project.in(file("Research/Microbenchmarks"))
 lazy val cfg = new {
 
   val version_211 = "2.11.12"
-  val version_212 = "2.12.4"
+  val version_212 = "2.12.6"
 
 
   val base = List(
@@ -317,7 +317,7 @@ lazy val lib = new {
     "org.codehaus.jsr166-mirror" % "jsr166y" % "1.7.0",
     "org.scala-lang.modules" %% "scala-xml" % "1.1.0")
 
-  lazy val scalaswing = libraryDependencies += "org.scala-lang.modules" %% "scala-swing" % "2.0.2"
+  lazy val scalaswing = libraryDependencies += "org.scala-lang.modules" %% "scala-swing" % "2.0.3"
   lazy val scalatest = libraryDependencies += "org.scalatest" %%% "scalatest" % "3.0.5" % "test"
 
 
@@ -326,7 +326,7 @@ lazy val lib = new {
       "io.circe" %%% "circe-core",
       "io.circe" %%% "circe-generic",
       "io.circe" %%% "circe-parser"
-    ).map(_ % "0.9.2")
+    ).map(_ % "0.9.3")
   }
 
   val reactivestreams = libraryDependencies ++= List(
@@ -349,10 +349,10 @@ lazy val lib = new {
 
   val scalatags = libraryDependencies += "com.lihaoyi" %%% "scalatags" % "0.6.7"
 
-  val jsdom = libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "0.9.5"
+  val jsdom = libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "0.9.6"
 
   val akka = {
-    val akkaVersion = "2.5.11"
+    val akkaVersion = "2.5.12"
     // akka:
     libraryDependencies ++= Seq(
       "com.typesafe.akka" %% "akka-slf4j" % akkaVersion,
@@ -366,7 +366,7 @@ lazy val lib = new {
 
   val scalaLogback = Seq(
     libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.2.3",
-    libraryDependencies += "com.typesafe.scala-logging" %% "scala-logging" % "3.8.0"
+    libraryDependencies += "com.typesafe.scala-logging" %% "scala-logging" % "3.9.0"
   )
 
   val scalafx = Seq(
@@ -377,8 +377,9 @@ lazy val lib = new {
 
   val jline = libraryDependencies += "org.scala-lang.modules" % "scala-jline" % "2.12.1"
 
-//  val retierTransmitter = Seq(
-//    libraryDependencies += "de.tuda.stg" %% "retier-communication" % "0.0.1-SNAPSHOT",
-//    libraryDependencies += "de.tuda.stg" %% "retier-communicator-tcp" % "0.0.1-SNAPSHOT" % "test",
-//    libraryDependencies += "de.tuda.stg" %% "retier-serializer-upickle" % "0.0.1-SNAPSHOT" % "test")
+  val retierTransmitter = List(
+    resolvers += Resolver.bintrayRepo("stg-tud", "maven"),
+    libraryDependencies += "de.tuda.stg" %% "scala-loci-communication" % "0.2.0",
+    libraryDependencies += "de.tuda.stg" %% "scala-loci-communicator-tcp" % "0.2.0" % "test",
+    libraryDependencies += "de.tuda.stg" %% "scala-loci-serializer-upickle" % "0.2.0" % "test")
 }

@@ -62,15 +62,15 @@ class FlattenTest extends RETests { multiEngined { engine => import engine._
 
     val flat = v.flatten
 
-    assert(flat.now === Set(1,2,3), "flatten fails")
+    assert(flat.readValueOnce === Set(1,2,3), "flatten fails")
 
     v2.set(100)
 
-    assert(flat.now === Set(1,100,3), "flatten fails 2")
+    assert(flat.readValueOnce === Set(1,100,3), "flatten fails 2")
 
     v.set(Set(v3, v2))
 
-    assert(flat.now === Set(3,100), "flatten fails 3")
+    assert(flat.readValueOnce === Set(3,100), "flatten fails 3")
   }
 
 
@@ -342,6 +342,31 @@ class FlattenTest extends RETests { multiEngined { engine => import engine._
     assert(dereferencedChanged)
     dereferencedChanged = false
     assert(dereferenced.readValueOnce == 4)
+  }
+
+
+  test("event of options"){
+    val someInput = Evt[Option[String]]
+    val flat = someInput.flatten
+    val res = flat.latest()
+    var count = 0
+
+    res.observe(_ => count += 1)
+
+    assert(count == 0)
+
+    someInput.fire(Some("Hello"))
+    assert(count == 1)
+    assert(res.readValueOnce == "Hello", "flatten some")
+
+    someInput.fire(None)
+    assert(count == 1)
+    assert(res.readValueOnce == "Hello", "flatten none")
+
+    someInput.fire(Some("World"))
+    assert(count == 2)
+    assert(res.readValueOnce == "World", "flatten some again")
+
   }
 
 } }

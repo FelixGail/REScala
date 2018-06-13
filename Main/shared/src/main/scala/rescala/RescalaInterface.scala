@@ -38,7 +38,7 @@ abstract class RescalaInterface[S <: Struct] {
   /** Signals represent time changing values of type A
     * @group reactive */
   final type Signal[+A] = reactives.Signal[A, S]
-  /** Events represent discrete occurences of values of type A
+  /** Events represent discrete occurrences of values of type A
     * @group reactive */
   final type Event[+A] = reactives.Event[A, S]
   /** @group reactive */
@@ -115,15 +115,15 @@ abstract class RescalaInterface[S <: Struct] {
       macro rescala.macros.ReactiveMacros.ReactiveExpression[A, S, Dynamic, rescala.reactives.Events.type]
   }
 
-  implicit def EventOps[T](e: Event[T]) = new Events.EOps[T, S](e)
+  implicit def EventOps[T](e: Event[T]): Events.EOps[T, S] = new Events.EOps[T, S](e)
 
 
   /** Contains static methods to create Events
     * @group create */
-  val Events = reactives.Events
+  val Events: reactives.Events.type = reactives.Events
   /** Contains static methods to create Signals
     * @group create */
-  val Signals = reactives.Signals
+  val Signals: reactives.Signals.type = reactives.Signals
 
   /**
     * Executes a transaction.
