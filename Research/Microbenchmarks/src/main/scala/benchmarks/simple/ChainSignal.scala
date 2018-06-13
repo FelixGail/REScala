@@ -28,7 +28,8 @@ class ChainSignal[S <: Struct] {
     source = Var(step.run())
     result = source
     for (_ <- Range(0, size.size)) {
-      result = result.map{v => val r = v + 1; work.consume(); r}
+      val x = result // TODO dynamicmap
+      result = x.map{v => val r = v + 1; work.consume(); r}
     }
   }
 

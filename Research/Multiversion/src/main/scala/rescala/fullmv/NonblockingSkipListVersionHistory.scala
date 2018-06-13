@@ -55,7 +55,7 @@ class NonblockingSkipListVersionHistory[V, T <: FullMVTurn, InDep, OutDep](init:
     }
 
     def finalize(v: MaybeWritten[V]): Unit = {
-      assert(value == NotFinal, s"may only write to active $this")
+      assert(value == NotFinal || (value == Unwritten && v == Unwritten), s"may only write to non-final $this")
       value = v
       finalized()
     }

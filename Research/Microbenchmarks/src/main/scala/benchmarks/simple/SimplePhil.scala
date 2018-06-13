@@ -2,7 +2,7 @@ package benchmarks.simple
 
 import java.util.concurrent.TimeUnit
 
-import benchmarks.{EngineParam, Step}
+import benchmarks.EngineParam
 import org.openjdk.jmh.annotations._
 import rescala.core.{Scheduler, Struct}
 import rescala.reactives._

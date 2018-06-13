@@ -36,12 +36,14 @@ class Creation[S <: Struct] {
 
   @Benchmark
   def `derived signal`(): Signal[String, S] = {
-    engine.Var("").map(identity)
+    val s = engine.Var("") // TODO dynamicmap
+    s.map(identity)
   }
 
   @Benchmark
   def `derived event`(): Event[String, S] = {
-    engine.Evt[String].map(identity)
+    val s = engine.Evt[String] // TODO dynamicmap
+    s.map(identity)
   }
 
 }

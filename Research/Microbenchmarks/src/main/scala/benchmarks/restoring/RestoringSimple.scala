@@ -29,15 +29,18 @@ class RestoringSimple[S <: Struct] {
   @Setup
   def setup(size: Size, engineParam: EngineParam[S]) = {
     engine = engineParam.engine
-    source = engine.Evt[Int]()
+    val s = engine.Evt[Int]() // TODO dynamicmap
+    source = s
     result = Nil
-    if (size.size <= 0) result = List(source.map(_+1))
+    if (size.size <= 0) result = List(s.map(_+1))
     val split = math.round(size.size * foldPercent)
     for (_ <- Range(0, split)) {
-      result = source.count :: result
+      val x = result // TODO dynamicmap
+      result = s.count :: x
     }
     for (_ <- Range(split, size.size)) {
-      result = source.map(_ + 1) :: result
+      val x = result // TODO dynamicmap
+      result = s.map(_ + 1) :: x
     }
   }
 

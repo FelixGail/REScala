@@ -34,7 +34,8 @@ class MonadicErrors[S <: Struct] {
       val source = engine.Evt[Try[Int]]
       var result: Event[Try[Int], S] = source
       for (_ <- Range(1, size.size)) {
-        result = result.map { t: Try[Int] => t.map { v => val r = v + 1; work.consume(); r } }
+        val x = result
+        result = x.map { t: Try[Int] => t.map { v => val r = v + 1; work.consume(); r } }
       }
       finalresult = result
       fire = i => source.fire(Try{i})
@@ -43,7 +44,8 @@ class MonadicErrors[S <: Struct] {
       val source = engine.Evt[Int]
       var result: Event[Int, S] = source
       for (_ <- Range(1, size.size)) {
-        result = result.map {  v => val r = v + 1; work.consume(); r  }
+        val x = result // TODO dynamicmap
+        result = x.map {  v => val r = v + 1; work.consume(); r  }
       }
       finalresult = result
       fire = source.fire
