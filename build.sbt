@@ -84,7 +84,7 @@ lazy val reactiveStreams = project.in(file("Extensions/ReactiveStreams"))
   .dependsOn(rescalaJVM)
 
 lazy val reswing = project.in(file("Extensions/RESwing"))
-  .settings(name := "reswing", cfg.base, cfg.bintray, cfg.strictScalac, lib.scalaswing)
+  .settings(name := "reswing", cfg.base, cfg.noPublish, cfg.strictScalac, lib.scalaswing)
   .dependsOn(rescalaJVM)
 
 lazy val restore = crossProject.in(file("Extensions/restoration"))
@@ -95,7 +95,7 @@ lazy val restoreJVM = restore.jvm
 lazy val restoreJS = restore.js
 
 lazy val rescalatags = project.in(file("Extensions/Rescalatags"))
-  .settings(cfg.base, cfg.strictScalac, cfg.bintray, cfg.test,
+  .settings(cfg.base, cfg.strictScalac, cfg.noPublish, cfg.test,
     cfg.js, lib.scalatags, jsDependencies += RuntimeDOM)
   .enablePlugins(ScalaJSPlugin)
   .dependsOn(rescalaJS)
@@ -250,7 +250,7 @@ lazy val cfg = new {
         None // Bintray does not support snapshots
       } else {
         val url = new java.net.URL(
-          s"https://api.bintray.com/content/stg-tud/maven/$proj/$ver")
+          s"https://api.bintray.com/content/misterd/maven/$proj/$ver")
         val patterns = Resolver.mavenStylePatterns
         Some(Resolver.url("bintray", url)(patterns))
       }
