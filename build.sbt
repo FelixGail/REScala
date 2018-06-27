@@ -177,7 +177,7 @@ lazy val paroli = project.in(file("Examples/paroli-chat"))
 
 lazy val fullmv = project.in(file("Research/Multiversion"))
   .settings( cfg.base, name := "rescala-multiversion",
-    cfg.test, cfg.noPublish, exportJars := true)
+    cfg.test, cfg.snapshotAssertions, cfg.bintray, exportJars := true)
   .dependsOn(rescalaJVM, testsJVM % "test->test")
 
 lazy val distributedFullmv = project.in(file("Research/MultiversionDistribution"))
