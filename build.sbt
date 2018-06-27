@@ -3,7 +3,6 @@
 ThisBuild / shellPrompt := { state => Project.extract(state).currentRef.project + "> " }
 // do not spam console with too many errors
 maxErrors := 5
-crossScalaVersions := Seq(cfg.version_211, cfg.version_212)
 ThisBuild / incOptions := (ThisBuild / incOptions).value.withLogRecompileOnMacro(false)
 cfg.noPublish
 
@@ -209,6 +208,7 @@ lazy val cfg = new {
   val base = List(
     organization := "de.tuda.stg",
     scalaVersion := version_212,
+    crossScalaVersions := Seq(version_211, version_212),
     baseScalac,
     // scaladoc
     autoAPIMappings := true,
