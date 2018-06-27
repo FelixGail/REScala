@@ -59,7 +59,7 @@ class FullMVTurn(val engine: FullMVEngine, val userlandThread: Thread) extends I
 //  val spinRestart = new java.util.HashSet[String]()
 //  val parkRestart = new java.util.HashSet[String]()
 
-  @tailrec private def runLocalQueue(): Unit = {
+  @tailrec private final def runLocalQueue(): Unit = {
     val head = localTaskQueue.pollFirst()
     if(head != null) {
       assert(head.turn == this, s"local queue of $this contains different turn's $head")
