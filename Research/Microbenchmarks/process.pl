@@ -29,8 +29,8 @@ our $FONTSIZE = "30";
 
 our $NAME_FINE = "Handcrafted";
 our $NAME_COARSE = "G-Lock";
-our $NAME_FULLMV = "FullMV";
-our $NAME_PARRP = "MV-RP";
+our $NAME_FULLMV = "MV-RP";
+our $NAME_PARRP = "ParRP";
 our $NAME_STM = "STM-RP";
 our $NAME_RESTORING = "Snapshots";
 
