@@ -5,7 +5,7 @@ import rescala.core.{Interp, _}
 import rescala.interface.RescalaInterface
 import rescala.macros.cutOutOfUserComputation
 import rescala.reactives.Observe.ObserveInteract
-import rescala.reactives.RExceptions.UnhandledFailureException
+import rescala.reactives.RExceptions.ObservedException
 
 import scala.collection.immutable.{LinearSeq, Queue}
 
@@ -60,7 +60,7 @@ trait Event[+T, S <: Struct] extends ReSource[S] with Interp[Option[T], S] with 
       override def checkExceptionAndRemoval(): Boolean = {
         reevalVal match {
           case Pulse.Exceptional(f) if onError == null =>
-            throw new UnhandledFailureException(Event.this, f)
+            throw new ObservedException(Event.this, "observed", f)
           case _                                       => ()
         }
         false
@@ -264,7 +264,7 @@ trait Event[+T, S <: Struct] extends ReSource[S] with Interp[Option[T], S] with 
   @cutOutOfUserComputation
   final def last[A >: T](n: Int)(implicit ticket: CreationTicket[S]): Signal[LinearSeq[A]] = {
     if (n < 0) throw new IllegalArgumentException(s"length must be positive")
-    else if (n == 0) Signal.static(Nil)
+    else if (n == 0) rescalaAPI.Var(Nil)
     else rescalaAPI.Events.foldOne(this, Queue[A]()) { (queue: Queue[A], v: T) =>
       if (queue.lengthCompare(n) >= 0) queue.tail.enqueue(v) else queue.enqueue(v)
     }
