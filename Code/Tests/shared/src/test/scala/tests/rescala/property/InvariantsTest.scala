@@ -1,17 +1,23 @@
 package tests.rescala.property
 
 import org.scalacheck.{Arbitrary, Gen}
+import org.scalatest.BeforeAndAfterEach
 import org.scalatest.matchers.should.Matchers
 import org.scalatestplus.scalacheck.ScalaCheckDrivenPropertyChecks
 import rescala.extra.invariant.SimpleScheduler.SignalWithInvariants
-import rescala.extra.invariant.{Invariant, InvariantViolationException, SimpleStruct}
+import rescala.extra.invariant.{Invariant, InvariantViolationException, SimpleScheduler, SimpleStruct}
 import rescala.interface.RescalaInterface
 import tests.rescala.testtools.RETests
 
-class InvariantsTest extends RETests with ScalaCheckDrivenPropertyChecks with Matchers {
+
+class InvariantsTest extends RETests with ScalaCheckDrivenPropertyChecks with Matchers with BeforeAndAfterEach {
   val engine: RescalaInterface[SimpleStruct] = RescalaInterface.interfaceFor(rescala.extra.invariant.SimpleScheduler)
 
   import engine._
+
+  override def beforeEach(): Unit = {
+    SimpleScheduler.resetScheduler()
+  }
 
   "expect invalid invariants to fail" in forAll(Gen.posNum[Int]) { (n: Int) =>
     assertThrows[InvariantViolationException] {

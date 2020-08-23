@@ -168,6 +168,8 @@ object SimpleScheduler
       baseMap.put(key, value.asInstanceOf[(Gen[Any], Shrink[Any], Any => Pretty)])
 
     def entries(): List[(Signal[Any], (Gen[Any], Shrink[Any], Any => Pretty))] = baseMap.map(p => p).toList
+
+    def clear(): Unit = baseMap.clear()
   }
 
   object SignalGeneratorMap {
@@ -179,6 +181,9 @@ object SimpleScheduler
   }
 
   private val signalGeneratorMap = SignalGeneratorMap.apply
+  def resetScheduler(): Unit = {
+    signalGeneratorMap.clear()
+  }
 
   implicit class SignalWithInvariants[T](val signal: Signal[T]) extends AnyVal {
 
